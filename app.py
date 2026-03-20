@@ -11,7 +11,6 @@ from flask import Flask, request, render_template, url_for
 from PIL import Image, ImageDraw, ImageFont
 from scipy.optimize import linear_sum_assignment
 from sklearn.cluster import KMeans
-from ultralytics import YOLO
 from werkzeug.utils import secure_filename
 
 import json
@@ -31,11 +30,8 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-# Try CNN model first, fall back to YOLO
 CNN_MODEL_PATH = os.path.join(BASE_DIR, 'best_corner_classifier_cnn.pt')
-YOLO_MODEL_PATH = os.path.join(BASE_DIR, 'best_corner_classifier.pt')
 _classifier = None
-_classifier_type = None  # 'cnn' or 'yolo'
 
 RANK_ORDER = {'A': 14, 'K': 13, 'Q': 12, 'J': 11, 'T': 10,
               '9': 9, '8': 8, '7': 7, '6': 6, '5': 5, '4': 4, '3': 3, '2': 2}
@@ -48,30 +44,24 @@ POSITION_THRESHOLD = 0.50  # minimum confidence for KMeans position assignment
 
 
 def get_classifier():
-    """Load classifier model. Prefers CNN if available, falls back to YOLO."""
-    global _classifier, _classifier_type
+    """Load the CNN classifier model."""
+    global _classifier
     if _classifier is not None:
-        return _classifier, _classifier_type
+        return _classifier
 
-    if os.path.exists(CNN_MODEL_PATH):
-        from train_classifier_cnn import CardClassifier
-        checkpoint = torch.load(CNN_MODEL_PATH, map_location='cpu', weights_only=False)
-        model = CardClassifier(num_classes=checkpoint['num_classes'])
-        model.load_state_dict(checkpoint['model_state_dict'])
-        model.eval()
-        _classifier = {
-            'model': model,
-            'class_names': checkpoint['class_names'],
-            'img_size': checkpoint.get('img_size', 64),
-        }
-        _classifier_type = 'cnn'
-        print(f"Loaded CNN classifier ({checkpoint.get('val_acc', 0):.3f} val acc)")
-    else:
-        _classifier = YOLO(YOLO_MODEL_PATH)
-        _classifier_type = 'yolo'
-        print("Loaded YOLO classifier")
+    from train_classifier_cnn import CardClassifier
+    checkpoint = torch.load(CNN_MODEL_PATH, map_location='cpu', weights_only=False)
+    model = CardClassifier(num_classes=checkpoint['num_classes'])
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.eval()
+    _classifier = {
+        'model': model,
+        'class_names': checkpoint['class_names'],
+        'img_size': checkpoint.get('img_size', 64),
+    }
+    print(f"Loaded CNN classifier ({checkpoint.get('val_acc', 0):.3f} val acc)")
 
-    return _classifier, _classifier_type
+    return _classifier
 
 
 def _classify_crop_cnn(crop_rgb, classifier_dict):
@@ -92,18 +82,9 @@ def _classify_crop_cnn(crop_rgb, classifier_dict):
     return class_name, conf.item()
 
 
-def _classify_crop_yolo(crop_rgb, model):
-    """Classify a single crop using the YOLO model."""
-    pred = model(crop_rgb, verbose=False)
-    for r in pred:
-        top1_idx = r.probs.top1
-        return r.names[top1_idx], float(r.probs.top1conf)
-    return 'XX', 0.0
-
-
 def classify_corners(image_np, corners):
     """Classify each detected corner crop. Returns list of card detections."""
-    classifier, cls_type = get_classifier()
+    classifier = get_classifier()
     h, w = image_np.shape[:2]
     detections = []
 
@@ -115,11 +96,7 @@ def classify_corners(image_np, corners):
             continue
 
         crop = image_np[cy1:cy2, cx1:cx2]
-
-        if cls_type == 'cnn':
-            top1_name, top1_conf = _classify_crop_cnn(crop, classifier)
-        else:
-            top1_name, top1_conf = _classify_crop_yolo(crop, classifier)
+        top1_name, top1_conf = _classify_crop_cnn(crop, classifier)
 
         # Skip low-confidence and non-card predictions
         if top1_conf < CLASSIFY_THRESHOLD or top1_name == 'XX':
