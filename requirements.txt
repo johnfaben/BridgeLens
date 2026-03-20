@@ -1,0 +1,9 @@
+flask
+numpy
+pillow
+scipy
+scikit-learn
+torch
+torchvision
+ultralytics
+gunicorn

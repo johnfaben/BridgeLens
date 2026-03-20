@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bridge Hand OCR</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: system-ui, -apple-system, sans-serif; background: #1a1a2e; color: #eee;
+               min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+        .container { text-align: center; max-width: 400px; width: 100%; }
+        h1 { font-size: 24px; margin-bottom: 8px; }
+        .subtitle { color: #8899aa; font-size: 14px; margin-bottom: 30px; }
+        .upload-area { background: #16213e; border: 2px dashed #333; border-radius: 12px;
+                       padding: 40px 20px; margin-bottom: 20px; }
+        .upload-area label { display: block; cursor: pointer; }
+        .upload-area .icon { font-size: 48px; margin-bottom: 10px; }
+        .upload-area p { color: #8899aa; font-size: 14px; }
+        input[type=file] { display: none; }
+        .filename { color: #5dade2; font-size: 14px; margin-top: 10px; display: none; }
+        .submit-btn { width: 100%; padding: 14px; background: #1b8a2e; color: #eee; border: none;
+                      border-radius: 8px; font-size: 18px; cursor: pointer; display: none; }
+        .submit-btn:hover { background: #23a33a; }
+        .submit-btn:disabled { background: #555; cursor: wait; }
+        .spinner { display: none; margin: 20px auto; }
+        .spinner.active { display: block; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Bridge Hand OCR</h1>
+    <p class="subtitle">Upload a photo of a bridge deal</p>
+    <form id="upload-form" action="/infer" method="post" enctype="multipart/form-data">
+        <div class="upload-area" id="drop-area">
+            <label for="file-input">
+                <div class="icon">&#128247;</div>
+                <p>Tap to take a photo or choose a file</p>
+            </label>
+            <input type="file" id="file-input" name="file" accept="image/*" capture="environment">
+            <div class="filename" id="filename"></div>
+            <img id="preview" style="display:none; max-width:100%; border-radius:8px; margin-top:12px;">
+        </div>
+        <button type="submit" class="submit-btn" id="submit-btn">Detect Cards</button>
+    </form>
+    <div class="spinner" id="spinner">
+        <p style="color:#8899aa">Detecting cards...</p>
+    </div>
+</div>
+<script>
+const fileInput = document.getElementById('file-input');
+const filename = document.getElementById('filename');
+const submitBtn = document.getElementById('submit-btn');
+const spinner = document.getElementById('spinner');
+const form = document.getElementById('upload-form');
+
+fileInput.addEventListener('change', () => {
+    if (fileInput.files.length > 0) {
+        filename.textContent = fileInput.files[0].name;
+        filename.style.display = 'block';
+        submitBtn.style.display = 'block';
+        const preview = document.getElementById('preview');
+        preview.src = URL.createObjectURL(fileInput.files[0]);
+        preview.style.display = 'block';
+    }
+});
+
+form.addEventListener('submit', () => {
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Processing...';
+    spinner.classList.add('active');
+});
+</script>
+</body>
+</html>
