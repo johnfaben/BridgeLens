@@ -8,3 +8,4 @@ tmp/
 *.pt
 *.db
 DEPLOY.md
+SETUP_TODO.md
