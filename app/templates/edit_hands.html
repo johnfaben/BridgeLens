@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Hands — BridgeLens{% endblock %}
+
+{% block extra_style %}
+        .missing-cards { background: #16213e; padding: 10px 14px; border-radius: 6px;
+                         margin-bottom: 16px; font-size: 14px; }
+        .missing-cards .missing-label { color: #8899aa; font-size: 12px; margin-bottom: 4px; }
+        .missing-suit { display: inline-block; margin-right: 12px; white-space: nowrap; }
+        .missing-suit-s, .missing-suit-c { color: #aaccee; }
+        .missing-suit-h, .missing-suit-d { color: #e74c3c; }
+        .diagram { display: grid; grid-template-columns: 1fr 1fr 1fr; grid-template-rows: auto auto auto;
+                   gap: 8px; margin: 16px 0; }
+        .hand { padding: 10px; background: #16213e; border-radius: 8px; }
+        .hand-north { grid-column: 2; grid-row: 1; }
+        .hand-west  { grid-column: 1; grid-row: 2; }
+        .hand-center { grid-column: 2; grid-row: 2; overflow: hidden; border-radius: 8px; }
+        .hand-center img { width: 100%; height: 100%; object-fit: cover; border-radius: 8px; }
+        .hand-east  { grid-column: 3; grid-row: 2; }
+        .hand-south { grid-column: 2; grid-row: 3; }
+        .hand-label { font-weight: bold; color: #8899aa; font-size: 12px; margin-bottom: 6px;
+                      text-align: center; }
+        .suit-row { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; }
+        .suit-symbol { font-size: 16px; width: 20px; text-align: center; flex-shrink: 0; }
+        .suit-s .suit-symbol, .suit-c .suit-symbol { color: #aaccee; }
+        .suit-h .suit-symbol, .suit-d .suit-symbol { color: #e74c3c; }
+        .suit-input { background: #1a1a2e; color: #eee; border: 1px solid #333; border-radius: 4px;
+                      padding: 4px 6px; font-size: 14px; font-family: monospace; width: 100%;
+                      text-transform: uppercase; }
+        .suit-input:focus { border-color: #5dade2; outline: none; }
+        .controls { display: flex; gap: 8px; justify-content: center; margin: 16px 0; }
+        .controls button { padding: 10px 20px; border-radius: 6px; border: none; font-size: 14px;
+                           cursor: pointer; }
+        .btn-save { background: #1b8a2e; color: #eee; }
+        .btn-save:hover { background: #23a33a; }
+        .btn-cancel { background: #16213e; color: #eee; border: 1px solid #333 !important; }
+        .btn-cancel:hover { background: #1a2744; }
+        .card-count { text-align: center; color: #8899aa; font-size: 14px; margin: 8px 0; }
+        .card-count.complete { color: #1b8a2e; }
+        .card-count.incomplete { color: #e67e22; }
+        .hint { text-align: center; color: #8899aa; font-size: 13px; margin-bottom: 12px; }
+{% endblock %}
+
+{% block content %}
+    <h2 style="font-size:18px; text-align:center; margin-bottom:4px;">Edit Hands</h2>
+    <p class="hint">Use AKQJT98765432 notation. Cards are auto-sorted.</p>
+
+    <div class="missing-cards" id="missing-cards">
+        <div class="missing-label">Missing cards:</div>
+        <span id="missing-display">
+        {% for suit, symbol in [('S', '\u2660'), ('H', '\u2665'), ('D', '\u2666'), ('C', '\u2663')] %}
+            {% if missing[suit] %}
+            <span class="missing-suit missing-suit-{{ suit|lower }}">{{ symbol }} {{ missing[suit]|join('') }}</span>
+            {% endif %}
+        {% endfor %}
+        </span>
+    </div>
+
+    <form id="edit-form" method="POST" action="{{ url_for('save_edit', upload_id=upload.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <div class="diagram">
+            <div class="hand hand-north">
+                <div class="hand-label">North</div>
+                {% for suit, symbol in [('S', '♠'), ('H', '♥'), ('D', '♦'), ('C', '♣')] %}
+                <div class="suit-row suit-{{ suit|lower }}">
+                    <span class="suit-symbol">{{ symbol }}</span>
+                    <input class="suit-input" type="text" name="n_{{ suit }}"
+                           value="{{ hands['n'][suit] }}" data-hand="n" data-suit="{{ suit }}">
+                </div>
+                {% endfor %}
+            </div>
+
+            <div class="hand hand-west">
+                <div class="hand-label">West</div>
+                {% for suit, symbol in [('S', '♠'), ('H', '♥'), ('D', '♦'), ('C', '♣')] %}
+                <div class="suit-row suit-{{ suit|lower }}">
+                    <span class="suit-symbol">{{ symbol }}</span>
+                    <input class="suit-input" type="text" name="w_{{ suit }}"
+                           value="{{ hands['w'][suit] }}" data-hand="w" data-suit="{{ suit }}">
+                </div>
+                {% endfor %}
+            </div>
+
+            <div class="hand-center">
+                <img src="{{ url_for('static', filename=image_file) }}" alt="Annotated">
+            </div>
+
+            <div class="hand hand-east">
+                <div class="hand-label">East</div>
+                {% for suit, symbol in [('S', '♠'), ('H', '♥'), ('D', '♦'), ('C', '♣')] %}
+                <div class="suit-row suit-{{ suit|lower }}">
+                    <span class="suit-symbol">{{ symbol }}</span>
+                    <input class="suit-input" type="text" name="e_{{ suit }}"
+                           value="{{ hands['e'][suit] }}" data-hand="e" data-suit="{{ suit }}">
+                </div>
+                {% endfor %}
+            </div>
+
+            <div class="hand hand-south">
+                <div class="hand-label">South</div>
+                {% for suit, symbol in [('S', '♠'), ('H', '♥'), ('D', '♦'), ('C', '♣')] %}
+                <div class="suit-row suit-{{ suit|lower }}">
+                    <span class="suit-symbol">{{ symbol }}</span>
+                    <input class="suit-input" type="text" name="s_{{ suit }}"
+                           value="{{ hands['s'][suit] }}" data-hand="s" data-suit="{{ suit }}">
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <p class="card-count" id="card-count">52 cards</p>
+
+        <div class="controls">
+            <button type="button" class="btn-cancel" onclick="history.back()">Cancel</button>
+            <button type="submit" class="btn-save">Save</button>
+        </div>
+    </form>
+
+<script>
+const RANK_ORDER = 'AKQJT98765432';
+const inputs = document.querySelectorAll('.suit-input');
+const countEl = document.getElementById('card-count');
+
+function sortRanks(s) {
+    return s.split('').sort((a, b) => RANK_ORDER.indexOf(a) - RANK_ORDER.indexOf(b)).join('');
+}
+
+const SUITS = ['S', 'H', 'D', 'C'];
+const SUIT_SYMBOLS = {'S': '\u2660', 'H': '\u2665', 'D': '\u2666', 'C': '\u2663'};
+const SUIT_CLASSES = {'S': 'missing-suit-s', 'H': 'missing-suit-h', 'D': 'missing-suit-d', 'C': 'missing-suit-c'};
+const ALL_RANKS = new Set(RANK_ORDER.split(''));
+const missingDisplay = document.getElementById('missing-display');
+const missingCards = document.getElementById('missing-cards');
+
+function updateCount() {
+    // Collect all cards currently in the inputs
+    const found = {};
+    SUITS.forEach(s => { found[s] = new Set(); });
+    inputs.forEach(inp => {
+        const suit = inp.dataset.suit;
+        inp.value.split('').forEach(r => { if (ALL_RANKS.has(r)) found[suit].add(r); });
+    });
+
+    let total = 0;
+    SUITS.forEach(s => { total += found[s].size; });
+    countEl.textContent = total + ' cards';
+    countEl.className = 'card-count ' + (total === 52 ? 'complete' : 'incomplete');
+
+    // Update missing cards display
+    let html = '';
+    SUITS.forEach(s => {
+        const missing = [];
+        RANK_ORDER.split('').forEach(r => { if (!found[s].has(r)) missing.push(r); });
+        if (missing.length > 0) {
+            html += '<span class="missing-suit ' + SUIT_CLASSES[s] + '">' +
+                    SUIT_SYMBOLS[s] + ' ' + missing.join('') + '</span>';
+        }
+    });
+    missingDisplay.innerHTML = html;
+    missingCards.style.display = (total === 52) ? 'none' : 'block';
+}
+
+inputs.forEach(inp => {
+    inp.addEventListener('input', function() {
+        // Strip invalid characters, uppercase, sort
+        let val = this.value.toUpperCase().replace(/[^AKQJT98765432]/g, '');
+        // Remove duplicate ranks
+        val = [...new Set(val.split(''))].join('');
+        this.value = sortRanks(val);
+        updateCount();
+    });
+
+    inp.addEventListener('blur', function() {
+        this.value = sortRanks(this.value.toUpperCase().replace(/[^AKQJT98765432]/g, ''));
+    });
+});
+
+updateCount();
+</script>
+{% endblock %}

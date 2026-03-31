@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block title %}About — BridgeLens{% endblock %}
+
+{% block extra_style %}
+        .about { line-height: 1.7; font-size: 14px; color: #ccc; }
+        .about h2 { font-size: 20px; color: #eee; margin-bottom: 16px; }
+        .about h3 { font-size: 16px; color: #eee; margin: 20px 0 8px; }
+        .about p { margin-bottom: 12px; }
+        .about ul { margin-left: 20px; margin-bottom: 12px; }
+{% endblock %}
+
+{% block content %}
+<div class="about">
+    <h2>About BridgeLens</h2>
+
+    <h3>What it does</h3>
+    <p>BridgeLens takes a photo of a bridge deal — four hands of cards laid out on a table — and
+    automatically identifies every card and which hand it belongs to. It outputs the deal in
+    PBN (Portable Bridge Notation) format and generates a link to view it in BBO's handviewer.</p>
+
+    <h3>How it works</h3>
+    <p>The detection runs in two stages:</p>
+    <ul>
+        <li><strong>Corner detection</strong> — a YOLO object detection model finds the corner
+        (rank + suit) of every visible card in the image.</li>
+        <li><strong>Classification</strong> — a CNN classifier identifies each detected corner
+        as one of 52 playing cards.</li>
+    </ul>
+    <p>Once the cards are identified, KMeans clustering groups them into four hands based on their
+    position in the image, and the Hungarian algorithm ensures each hand gets at most 13 cards.</p>
+
+    <h3>History</h3>
+    <p>This project started at the Bridge Hackathon in 2020, where the original version used YOLOv4 Darknet
+    for single-stage card detection. We never managed to get that pipeline accurate enough to use consistently
+	for actual bridge deals.
+	</p>
+	<p>
+	I (John Faben, the developer of Bridge Lens) played around with this on and off for about 6 years, one idea
+	that I hadn't gotten around to trying was separating out the logic to detect card corners from the logic to 
+	determine what each corner is. In early 2026, with the help of Claude Code, I finally decided to test this idea,
+	with much more success than I'd had with any previous iteration, and Bridge Lens was born. 
+	</P>
+	
+    <h3>Training data</h3>
+    <p>The models were trained on labelled photos of bridge hands. The corner detector achieves
+    99.4% mAP and the classifier reaches 99.8% top-1 accuracy. If you opt in when uploading,
+    your photos may be used to improve future versions of the models.</p>
+
+    <p style="margin-top: 30px;"><a href="{{ url_for('upload_form') }}">Try it yourself</a> or
+    <a href="{{ url_for('demo') }}">see how it works</a> with a pre-loaded example.</p>
+	
+	<h3>Future Development</h3>
+	<p>
+	This is purely a hobby project. I'm happy for anyone to improve it. I'm also happy (indeed, would be delighted) 
+	to develop additional features if people would find it useful.
+	</p>
+	<p>I'm happy to share the data I used to train the models (which is a mix of pictures I took myself and pictures 
+	which were uploaded as part of the hackathons), and the code that was used to train them. Although in the end that 
+	ended up being about 20 lines for each model - it was just a matter of picking the right architecture, and then it
+    "just worked".</p>
+
+</div>
+{% endblock %}

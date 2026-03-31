@@ -3,7 +3,9 @@ __pycache__/
 venv/
 .env
 uploads/
-static/output/
+app/static/output/
 tmp/
 *.pt
+*.db
 DEPLOY.md
+migrations/

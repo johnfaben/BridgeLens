@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block title %}Review Cards — BridgeLens{% endblock %}
+
+{% block extra_style %}
+        h2 { font-size: 18px; margin-bottom: 4px; text-align: center; }
+        .instructions { color: #8899aa; font-size: 13px; text-align: center; margin-bottom: 16px; }
+        .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+                     gap: 10px; margin-bottom: 20px; }
+        .card-item { background: #16213e; border-radius: 8px; padding: 6px; text-align: center; }
+        .card-item img { width: 100%; border-radius: 4px; object-fit: contain; }
+        .card-item select { width: 100%; margin-top: 6px; padding: 6px; border-radius: 4px;
+                            background: #1a1a2e; color: #eee; border: 1px solid #333;
+                            font-size: 14px; }
+        .card-item .conf { color: #8899aa; font-size: 11px; margin-top: 2px; }
+        .card-item.low-conf { border: 2px solid #e67e22; }
+        .card-item.user-added { border: 2px solid #3498db; }
+        .controls { display: flex; gap: 8px; justify-content: center; margin: 16px 0; }
+        .controls button { padding: 10px 20px; border-radius: 6px; border: none; font-size: 14px;
+                           cursor: pointer; }
+        .btn-save { background: #1b8a2e; color: #eee; }
+        .btn-save:hover { background: #23a33a; }
+        .btn-back { background: #16213e; color: #eee; border: 1px solid #333 !important; }
+        .btn-back:hover { background: #1a2744; }
+        .counter { text-align: center; color: #8899aa; font-size: 14px; margin: 8px 0; }
+{% endblock %}
+
+{% block content %}
+    <h2>Step 2: Review card classifications</h2>
+    <p class="instructions">
+        Check each card is correct. Change any wrong ones using the dropdown.
+    </p>
+
+    <p class="counter">{{ corners|length }} corners detected</p>
+
+    <div class="card-grid">
+        {% for corner in corners %}
+        <div class="card-item {{ 'low-conf' if corner.confidence < 0.5 else '' }} {{ 'user-added' if corner.get('source') == 'user' else '' }}">
+            <img src="{{ url_for('corner_crop', upload_id=upload.id, x1=corner.bbox[0]|int, y1=corner.bbox[1]|int, x2=corner.bbox[2]|int, y2=corner.bbox[3]|int) }}"
+                 alt="{{ corner.class_name }}">
+            <select class="card-select" data-index="{{ loop.index0 }}">
+                {% for opt in card_options %}
+                <option value="{{ opt }}" {{ 'selected' if opt == corner.class_name else '' }}>{{ opt }}</option>
+                {% endfor %}
+            </select>
+            <div class="conf">{{ '%.0f' % (corner.confidence * 100) }}% conf</div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <form id="step2-form" method="POST" action="{{ url_for('correct_save', upload_id=upload.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="corrections_json" id="corrections-json">
+        <div class="controls">
+            <button type="button" class="btn-back" onclick="history.back()">Back</button>
+            <button type="submit" class="btn-save">Save corrections</button>
+        </div>
+    </form>
+
+<script>
+let corners = {{ corners_json | safe }};
+
+document.querySelectorAll('.card-select').forEach(function(sel) {
+    sel.addEventListener('change', function() {
+        const idx = parseInt(this.dataset.index);
+        corners[idx].class_name = this.value;
+    });
+});
+
+document.getElementById('step2-form').addEventListener('submit', function() {
+    document.getElementById('corrections-json').value = JSON.stringify(corners);
+});
+</script>
+{% endblock %}

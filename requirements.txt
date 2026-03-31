@@ -1,4 +1,12 @@
 flask
+flask-sqlalchemy
+flask-migrate
+flask-login
+flask-wtf
+authlib
+itsdangerous
+python-dotenv
+requests
 numpy
 pillow
 scipy

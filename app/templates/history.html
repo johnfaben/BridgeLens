@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block extra_style %}
+        h2 { margin-bottom: 16px; }
+        .upload-list { list-style: none; }
+        .upload-item { background: #16213e; border-radius: 8px; padding: 14px; margin-bottom: 10px; }
+        .upload-item .meta { color: #8899aa; font-size: 13px; margin-bottom: 6px; }
+        .upload-item .pbn { font-family: monospace; font-size: 13px; margin-bottom: 6px; }
+        .upload-item .links { font-size: 14px; }
+        .upload-item .links a { margin-right: 12px; }
+        .empty { color: #8899aa; text-align: center; padding: 40px 0; }
+{% endblock %}
+
+{% block content %}
+<h2>Your uploads</h2>
+
+{% if uploads %}
+<ul class="upload-list">
+    {% for u in uploads %}
+    <li class="upload-item">
+        <div class="meta">{{ u.created_at.strftime('%d %b %Y %H:%M') }} — {{ u.original_filename }} — {{ u.total_cards }} cards</div>
+        <div class="pbn">{{ u.pbn }}</div>
+        <div class="links">
+            <a href="{{ u.bbo_url }}" target="_blank">BBO Handviewer</a>
+            <a href="{{ url_for('static', filename='output/' + u.result_filename) }}" target="_blank">Annotated image</a>
+        </div>
+    </li>
+    {% endfor %}
+</ul>
+{% else %}
+<p class="empty">No uploads yet. <a href="{{ url_for('upload_form') }}">Upload a photo</a> to get started.</p>
+{% endif %}
+{% endblock %}

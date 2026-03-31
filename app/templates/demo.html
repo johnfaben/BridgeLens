@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}Example — BridgeLens{% endblock %}
+
+{% block extra_style %}
+        h2 { font-size: 20px; margin-bottom: 6px; text-align: center; }
+        .step-label { color: #8899aa; font-size: 13px; text-transform: uppercase; letter-spacing: 1px;
+                      margin: 20px 0 8px; }
+        .step-desc { color: #ccc; font-size: 14px; margin-bottom: 12px; }
+        .demo-image { max-width: 100%; border-radius: 8px; margin-bottom: 16px; }
+
+        .info { text-align: center; color: #8899aa; font-size: 14px; margin: 8px 0; }
+
+        .pbn-box { background: #16213e; padding: 12px; border-radius: 6px; margin: 12px 0;
+                   font-family: monospace; font-size: 13px; word-break: break-all;
+                   cursor: pointer; position: relative; }
+        .pbn-box:hover { background: #1a2744; }
+        .copy-hint { position: absolute; right: 8px; top: 8px; color: #555; font-size: 11px; }
+        .copied { color: #1b8a2e !important; }
+
+        .bbo-frame { width: 100%; height: 340px; border: none; border-radius: 8px;
+                     background: #fff; margin: 12px 0; }
+
+        .bbo-link { display: block; text-align: center; margin: 8px 0; padding: 12px;
+                    background: #0f3460; color: #eee; text-decoration: none; border-radius: 8px;
+                    font-size: 16px; }
+        .bbo-link:hover { background: #1a5276; }
+
+        .try-link { display: block; text-align: center; margin: 20px 0; padding: 14px;
+                    background: #1b8a2e; color: #eee; text-decoration: none; border-radius: 8px;
+                    font-size: 18px; }
+        .try-link:hover { background: #23a33a; }
+{% endblock %}
+
+{% block content %}
+    <h2>How BridgeLens works</h2>
+
+    <p class="step-label">Step 1 — Original photo</p>
+    <p class="step-desc">A photo of four bridge hands laid out on a table.</p>
+    <img class="demo-image" src="{{ url_for('static', filename='img/example_original.jpg') }}" alt="Original photo">
+
+    <p class="step-label">Step 2 — Detection</p>
+    <p class="step-desc">BridgeLens finds every card corner and classifies it. Cards are grouped
+    into four hands by position.</p>
+    <img class="demo-image" src="{{ url_for('static', filename='img/example_result.jpg') }}" alt="Detected cards">
+
+    <p class="step-label">Step 3 — Result</p>
+    <p class="step-desc">{{ total_cards }} cards detected. The deal in PBN format:</p>
+
+    <div class="pbn-box" onclick="copyPbn(this)">
+        <span class="copy-hint" id="copy-hint">tap to copy</span>
+        {{ pbn }}
+    </div>
+
+    <iframe class="bbo-frame" src="{{ bbo_url }}"></iframe>
+
+    <a class="bbo-link" href="{{ bbo_url }}" target="_blank">Open in BBO Handviewer</a>
+
+    <a class="try-link" href="{{ url_for('upload_form') }}">Try it with your own photo</a>
+
+<script>
+function copyPbn(el) {
+    const text = el.textContent.replace('tap to copy', '').trim();
+    navigator.clipboard.writeText(text).then(() => {
+        const hint = document.getElementById('copy-hint');
+        hint.textContent = 'copied!';
+        hint.classList.add('copied');
+        setTimeout(() => { hint.textContent = 'tap to copy'; hint.classList.remove('copied'); }, 2000);
+    });
+}
+</script>
+{% endblock %}
