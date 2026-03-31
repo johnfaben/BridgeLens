@@ -8,4 +8,3 @@ tmp/
 *.pt
 *.db
 DEPLOY.md
-migrations/
