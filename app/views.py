@@ -3,7 +3,9 @@ import os
 import uuid
 from datetime import datetime, timezone
 
-from flask import request, render_template, redirect, url_for, flash, session, g, jsonify
+import time
+
+from flask import request, render_template, redirect, url_for, flash, session, g, jsonify, Response, stream_with_context
 from flask_login import login_user, logout_user, current_user, login_required
 from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature
 from PIL import Image
@@ -56,89 +58,160 @@ def infer_image():
 
     # Save uploaded file, strip EXIF for privacy
     pil_img = Image.open(file.stream)
-    # Apply EXIF orientation before stripping
     from PIL import ImageOps
     pil_img = ImageOps.exif_transpose(pil_img)
     if pil_img.mode != 'RGB':
         pil_img = pil_img.convert('RGB')
     strip_exif_and_save(pil_img, file_path)
 
-    # Run inference
-    image_np = load_image(file_path)
-    corners = detect_corners(image_np)
-    detections = classify_corners(image_np, corners)
-    if not detections:
-        os.remove(file_path)
-        flash('No cards were detected in this image. Please try again with a clearer photo, or a different image.')
-        return redirect(url_for('upload_form'))
-
-    hands, card_positions, inferred_card = detections_to_four_hands(detections)
-
-    pbn = hands_to_pbn(hands)
-    bbo_url = hands_to_bbo_url(hands)
-
-    hand_counts = {}
-    total_cards = 0
-    for player in 'nesw':
-        count = sum(len(hands[player][s]) for s in 'SHDC')
-        hand_counts[player] = count
-        total_cards += count
-
-    # Draw annotated image
-    annotated = draw_detections(image_np, detections, card_positions)
-    result_filename = f"{os.path.splitext(stored_filename)[0]}_result.jpg"
-    output_path = os.path.join(app.config['OUTPUT_FOLDER'], result_filename)
-    annotated.save(output_path)
-
-    # Save upload record
+    # Create a pending upload record so the SSE endpoint can find the file
     training_consent = request.form.get('training_consent') == 'on'
-    # Serialise detections for correction workflow
-    det_records = [
-        {'bbox': list(d['bbox']), 'class_name': d['class_name'],
-         'confidence': round(d['confidence'], 3)}
-        for d in detections
-    ]
-
-    # If a card was inferred, the detected count is one less
-    detected_cards = total_cards - 1 if inferred_card else total_cards
-
-    # Format inferred card for display
-    inferred_card_display = None
-    inferred_hand_display = None
-    if inferred_card:
-        card_name, hand_dir = inferred_card
-        rank, suit_letter = card_name[:-1], card_name[-1]
-        suit_symbols = {'S':'\u2660','H':'\u2665','D':'\u2666','C':'\u2663'}
-        hand_names = {'n':'North','e':'East','s':'South','w':'West'}
-        inferred_card_display = f"{suit_symbols.get(suit_letter, suit_letter)}{rank}"
-        inferred_hand_display = hand_names.get(hand_dir, hand_dir)
-
     upload = Upload(
         user_id=current_user.id if current_user.is_authenticated else None,
         original_filename=original_filename,
         stored_filename=stored_filename,
-        result_filename=result_filename,
-        pbn=pbn,
-        bbo_url=bbo_url,
-        total_cards=detected_cards,
+        result_filename='',
+        pbn='',
+        bbo_url='',
+        total_cards=0,
         training_consent=training_consent,
     )
-    upload.set_detections(det_records)
     db.session.add(upload)
     db.session.commit()
 
-    display_hands = {p: hand_to_display(hands[p]) for p in 'nesw'}
-    missing = _compute_missing(hands)
+    return redirect(url_for('processing', upload_id=upload.id))
+
+
+@app.route('/processing/<int:upload_id>')
+def processing(upload_id):
+    upload = db.session.get(Upload, upload_id)
+    if not upload:
+        flash('Upload not found.')
+        return redirect(url_for('upload_form'))
+    return render_template('processing.html', upload_id=upload_id)
+
+
+@app.route('/process/<int:upload_id>')
+def process_sse(upload_id):
+    """SSE endpoint that runs inference and streams progress."""
+    upload = db.session.get(Upload, upload_id)
+    if not upload:
+        return 'Not found', 404
+
+    def generate():
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], upload.stored_filename)
+
+        yield f"data: {json.dumps({'stage': 'detecting', 'message': 'Detecting card corners...'})}\n\n"
+
+        t0 = time.time()
+        image_np = load_image(file_path)
+        corners = detect_corners(image_np)
+        t_detect = time.time() - t0
+
+        n_corners = len(corners)
+        img_h, img_w = image_np.shape[:2]
+        corner_bboxes = [list(c['bbox']) for c in corners]
+        yield f"data: {json.dumps({'stage': 'classifying', 'message': f'Classifying {n_corners} corners...', 'time_detect': round(t_detect, 1), 'corners': corner_bboxes, 'img_w': img_w, 'img_h': img_h})}\n\n"
+
+        t0 = time.time()
+        detections = classify_corners(image_np, corners)
+        t_classify = time.time() - t0
+
+        if not detections:
+            os.remove(file_path)
+            db.session.delete(upload)
+            db.session.commit()
+            yield f"data: {json.dumps({'stage': 'error', 'message': 'No cards were detected in this image. Please try again with a clearer photo, or a different image.'})}\n\n"
+            return
+
+        yield f"data: {json.dumps({'stage': 'assigning', 'message': 'Assigning cards to hands...', 'time_classify': round(t_classify, 1)})}\n\n"
+
+        hands, card_positions, inferred_card = detections_to_four_hands(detections)
+
+        pbn = hands_to_pbn(hands)
+        bbo_url = hands_to_bbo_url(hands)
+
+        total_cards = sum(len(hands[p][s]) for p in 'nesw' for s in 'SHDC')
+
+        # Draw annotated image
+        annotated = draw_detections(image_np, detections, card_positions)
+        result_filename = f"{os.path.splitext(upload.stored_filename)[0]}_result.jpg"
+        output_path = os.path.join(app.config['OUTPUT_FOLDER'], result_filename)
+        annotated.save(output_path)
+
+        det_records = [
+            {'bbox': list(d['bbox']), 'class_name': d['class_name'],
+             'confidence': round(d['confidence'], 3)}
+            for d in detections
+        ]
+
+        detected_cards = total_cards - 1 if inferred_card else total_cards
+
+        upload.result_filename = result_filename
+        upload.pbn = pbn
+        upload.bbo_url = bbo_url
+        upload.total_cards = detected_cards
+        upload.set_detections(det_records)
+        db.session.commit()
+
+        yield f"data: {json.dumps({'stage': 'done', 'redirect': url_for('result', upload_id=upload.id), 'time_classify': round(t_classify, 1)})}\n\n"
+
+    return Response(stream_with_context(generate()), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+
+@app.route('/result/<int:upload_id>')
+def result(upload_id):
+    """Display result from a completed upload."""
+    upload = db.session.get(Upload, upload_id)
+    if not upload or not upload.pbn:
+        flash('Upload not found.')
+        return redirect(url_for('upload_form'))
+
+    hands_lists = _parse_pbn_to_hands_lists(upload.pbn)
+    display_hands = {p: hand_to_display(hands_lists[p]) for p in 'nesw'}
+    hand_counts = {p: sum(len(hands_lists[p][s]) for s in 'SHDC') for p in 'nesw'}
+    missing = _compute_missing(hands_lists)
+
+    total_in_pbn = sum(hand_counts[p] for p in 'nesw')
+    inferred_card = None
+    inferred_card_display = None
+    inferred_hand_display = None
+    # If we detected 51 and PBN has 52, one was inferred
+    if upload.total_cards == 51 and total_in_pbn == 52:
+        # Find which card was inferred by comparing detections to PBN
+        det_cards = {d['class_name'] for d in (upload.get_detections() or [])}
+        pbn_cards = set()
+        for p in 'nesw':
+            for s in 'SHDC':
+                for r in hands_lists[p][s]:
+                    pbn_cards.add(f"{r}{s}")
+        inferred = pbn_cards - det_cards
+        if len(inferred) == 1:
+            card_name = inferred.pop()
+            # Find which hand it's in
+            for p in 'nesw':
+                for s in 'SHDC':
+                    if card_name[:-1] in hands_lists[p][s] and card_name[-1] == s:
+                        rank, suit_letter = card_name[:-1], card_name[-1]
+                        suit_symbols = {'S':'\u2660','H':'\u2665','D':'\u2666','C':'\u2663'}
+                        hand_names = {'n':'North','e':'East','s':'South','w':'West'}
+                        inferred_card = True
+                        inferred_card_display = f"{suit_symbols.get(suit_letter, suit_letter)}{rank}"
+                        inferred_hand_display = hand_names.get(p, p)
+                        break
+                if inferred_card:
+                    break
 
     return render_template(
         'result.html',
         hands=display_hands,
         hand_counts=hand_counts,
-        total_cards=detected_cards,
-        pbn=pbn,
-        bbo_url=bbo_url,
-        image_file=f'output/{result_filename}',
-        detections=detections,
+        total_cards=upload.total_cards,
+        pbn=upload.pbn,
+        bbo_url=upload.bbo_url,
+        image_file=f'output/{upload.result_filename}',
+        detections=upload.get_detections() or [],
         upload_id=upload.id,
         missing=missing,
         inferred_card=inferred_card,
@@ -248,7 +321,6 @@ def _parse_pbn_to_hands(pbn):
     """Parse PBN string into {player: {suit: 'AKQJ...'}} for editing."""
     hands = {p: {'S': '', 'H': '', 'D': '', 'C': ''} for p in 'nesw'}
     try:
-        # [Deal "N:s.h.d.c s.h.d.c s.h.d.c s.h.d.c"]
         deal = pbn.split('"')[1].split(':')[1].strip().rstrip('"')
         parts = deal.split()
         for i, player in enumerate('nesw'):
@@ -260,6 +332,12 @@ def _parse_pbn_to_hands(pbn):
     except (IndexError, ValueError):
         pass
     return hands
+
+
+def _parse_pbn_to_hands_lists(pbn):
+    """Parse PBN string into {player: {suit: ['A','K',...]}} for display/missing."""
+    raw = _parse_pbn_to_hands(pbn)
+    return {p: {s: list(raw[p][s]) for s in 'SHDC'} for p in 'nesw'}
 
 
 @app.route('/correct/<int:upload_id>')

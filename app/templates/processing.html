@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+
+{% block extra_style %}
+        .processing-wrap { text-align: center; padding-top: 30px; }
+        .status { color: #8899aa; font-size: 16px; margin: 20px 0; }
+        .timing { color: #556677; font-size: 13px; margin-top: 8px; }
+        .image-wrap { position: relative; display: inline-block; max-width: 100%; margin: 16px 0; }
+        .image-wrap img { max-width: 100%; border-radius: 8px; display: block; }
+        .image-wrap canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+                             border-radius: 8px; pointer-events: none; }
+{% endblock %}
+
+{% block content %}
+<div class="processing-wrap">
+    <h1 style="font-size:24px;">Processing image</h1>
+    <p class="status" id="status">Starting...</p>
+    <div class="image-wrap">
+        <img id="preview" src="{{ url_for('correct_crop_upload', upload_id=upload_id) }}" alt="Uploaded image">
+        <canvas id="overlay"></canvas>
+    </div>
+    <p class="timing" id="timing"></p>
+</div>
+<script>
+const status = document.getElementById('status');
+const timing = document.getElementById('timing');
+const preview = document.getElementById('preview');
+const overlay = document.getElementById('overlay');
+const ctx = overlay.getContext('2d');
+
+function drawCorners(corners, imgW, imgH) {
+    const dispW = preview.clientWidth;
+    const dispH = preview.clientHeight;
+    overlay.width = dispW;
+    overlay.height = dispH;
+    const scaleX = dispW / imgW;
+    const scaleY = dispH / imgH;
+    ctx.strokeStyle = '#5dade2';
+    ctx.lineWidth = 2;
+    for (const box of corners) {
+        const x = box[0] * scaleX;
+        const y = box[1] * scaleY;
+        const w = (box[2] - box[0]) * scaleX;
+        const h = (box[3] - box[1]) * scaleY;
+        ctx.strokeRect(x, y, w, h);
+    }
+}
+
+const source = new EventSource('{{ url_for("process_sse", upload_id=upload_id) }}');
+
+source.onmessage = function(e) {
+    const data = JSON.parse(e.data);
+    if (data.stage === 'done') {
+        source.close();
+        if (data.time_classify) {
+            timing.textContent = 'Classification took ' + data.time_classify + 's';
+        }
+        window.location.href = data.redirect;
+    } else if (data.stage === 'error') {
+        source.close();
+        status.textContent = data.message;
+        setTimeout(function() { window.location.href = '{{ url_for("upload_form") }}'; }, 3000);
+    } else {
+        status.textContent = data.message;
+        if (data.corners) {
+            drawCorners(data.corners, data.img_w, data.img_h);
+        }
+        if (data.time_detect) {
+            timing.textContent = 'Corner detection took ' + data.time_detect + 's';
+        }
+    }
+};
+
+source.onerror = function() {
+    source.close();
+    status.textContent = 'Something went wrong. Redirecting...';
+    setTimeout(function() { window.location.href = '{{ url_for("upload_form") }}'; }, 2000);
+};
+</script>
+{% endblock %}
