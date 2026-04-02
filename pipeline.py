@@ -12,7 +12,8 @@ import torch
 import torchvision
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CORNER_MODEL_PATH = os.path.join(BASE_DIR, 'best_corner_detector.pt')
+CORNER_MODEL_PT = os.path.join(BASE_DIR, 'best_corner_detector.pt')
+CORNER_MODEL_OV = os.path.join(BASE_DIR, 'best_corner_detector_openvino_model')
 
 CHUNK_SIZE = 640
 OVERLAP = 100
@@ -25,7 +26,12 @@ _corner_model = None
 def _get_corner_model():
     global _corner_model
     if _corner_model is None:
-        _corner_model = YOLO(CORNER_MODEL_PATH)
+        if os.path.isdir(CORNER_MODEL_OV):
+            _corner_model = YOLO(CORNER_MODEL_OV, task='detect')
+            print("Loaded YOLO corner detector (OpenVINO)")
+        else:
+            _corner_model = YOLO(CORNER_MODEL_PT)
+            print("Loaded YOLO corner detector (PyTorch)")
     return _corner_model
 
 

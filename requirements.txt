@@ -16,3 +16,4 @@ torchvision
 ultralytics
 gunicorn
 psycopg2-binary
+openvino>=2024.0.0

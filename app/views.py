@@ -261,6 +261,7 @@ def edit_hands(upload_id):
 
     return render_template('edit_hands.html', upload=upload, hands=hands,
                            image_file=f'output/{upload.result_filename}',
+                           original_image_url=url_for('correct_crop_upload', upload_id=upload_id),
                            missing=missing)
 
 
@@ -556,7 +557,9 @@ def corner_crop(upload_id):
 def demo():
     pbn = '[Deal "N:.AKT984.A.AQT965 T94.532.T972.842 AQJ652.QJ76.KJ3. K873..Q8654.KJ73"]'
     bbo_url = 'https://www.bridgebase.com/tools/handviewer.html?n=SHAKT984DACAQT965&e=ST94H532DT972C842&s=SAQJ652HQJ76DKJ3C&w=SK873HDQ8654CKJ73'
-    return render_template('demo.html', pbn=pbn, bbo_url=bbo_url, total_cards=52)
+    return render_template('demo.html', pbn=pbn, bbo_url=bbo_url, total_cards=51,
+                           inferred_card=True, inferred_card_display='\u26609',
+                           inferred_hand_display='East')
 
 
 @app.route('/about')

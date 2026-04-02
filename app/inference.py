@@ -266,31 +266,42 @@ def draw_detections(image_np, detections, card_positions=None):
     """Draw classified card detections on image. Color by suit."""
     img = Image.fromarray(image_np)
     draw = ImageDraw.Draw(img)
+
+    # Scale annotations relative to image size (tuned for ~3000px wide)
+    scale = max(img.size) / 3000
     try:
-        font = ImageFont.truetype("arial.ttf", 14)
-        font_large = ImageFont.truetype("arial.ttf", 20)
+        font = ImageFont.truetype("arial.ttf", max(10, int(35 * scale)))
+        font_large = ImageFont.truetype("arial.ttf", max(14, int(50 * scale)))
     except (IOError, OSError):
         font = ImageFont.load_default()
         font_large = font
 
-    suit_colors = {'S': '#222222', 'H': '#dd0000', 'D': '#dd0000', 'C': '#222222'}
+    box_width = max(1, int(3 * scale))
+    dot_r = max(4, int(12 * scale))
+    dot_outline = max(1, int(2 * scale))
+    text_offset_x = max(8, int(20 * scale))
+    text_offset_y = max(10, int(25 * scale))
+    stroke_w = max(1, int(4 * scale))
+
+    suit_colors = {'S': '#444444', 'H': '#991111', 'D': '#991111', 'C': '#444444'}
 
     for d in detections:
         rank, suit = parse_card(d['class_name'])
         color = suit_colors.get(suit, '#ffffff')
         x1, y1, x2, y2 = d['bbox']
-        draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
+        draw.rectangle([x1, y1, x2, y2], outline=color, width=box_width)
 
     if card_positions:
         for card_name, (cx, cy) in card_positions.items():
             rank, suit = parse_card(card_name)
             color = suit_colors.get(suit, '#ffffff')
             bg = '#ffffff'
-            r = 6
             cx, cy = int(cx), int(cy)
-            draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=color, outline=bg, width=2)
-            draw.text((cx + 10, cy - 10), card_name, fill=color, font=font_large,
-                      stroke_width=2, stroke_fill='white')
+            draw.ellipse([cx - dot_r, cy - dot_r, cx + dot_r, cy + dot_r],
+                         fill=color, outline=bg, width=dot_outline)
+            draw.text((cx + text_offset_x, cy - text_offset_y), card_name,
+                      fill=color, font=font_large, stroke_width=stroke_w,
+                      stroke_fill='white')
 
     return img
 

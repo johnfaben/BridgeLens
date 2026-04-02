@@ -45,7 +45,9 @@
     <img class="demo-image" src="{{ url_for('static', filename='img/example_result.jpg') }}" alt="Detected cards">
 
     <p class="step-label">Step 3 — Result</p>
-    <p class="step-desc">{{ total_cards }} cards detected. The deal in PBN format:</p>
+    <p class="step-desc">{{ total_cards }} cards detected.
+        {% if inferred_card %}The {{ inferred_card_display }} was not found and has been placed in the {{ inferred_hand_display }} hand by default.{% endif %}
+        The deal in PBN format:</p>
 
     <div class="pbn-box" onclick="copyPbn(this)">
         <span class="copy-hint" id="copy-hint">tap to copy</span>

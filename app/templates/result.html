@@ -20,8 +20,9 @@
         .copy-hint { position: absolute; right: 8px; top: 8px; color: #555; font-size: 11px; }
         .copied { color: #1b8a2e !important; }
 
-        .bbo-frame { width: 100%; height: 340px; border: none; border-radius: 8px;
-                     background: #fff; margin: 12px 0; }
+        .bbo-wrap { overflow: hidden; border-radius: 8px; margin: 12px 0; }
+        .bbo-frame { width: calc(100% + 40px); height: 340px; border: none;
+                     background: #fff; margin-left: -20px; }
 
         .bbo-link { display: block; text-align: center; margin: 8px 0; padding: 12px;
                     background: #0f3460; color: #eee; text-decoration: none; border-radius: 8px;
@@ -64,7 +65,9 @@
         {{ pbn }}
     </div>
 
-    <iframe class="bbo-frame" src="{{ bbo_url }}"></iframe>
+    <div class="bbo-wrap">
+        <iframe class="bbo-frame" src="{{ bbo_url }}"></iframe>
+    </div>
 
     <a class="bbo-link" href="{{ bbo_url }}" target="_blank">Open in BBO Handviewer</a>
 

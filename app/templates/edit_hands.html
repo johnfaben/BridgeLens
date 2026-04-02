@@ -39,6 +39,10 @@
         .card-count.complete { color: #1b8a2e; }
         .card-count.incomplete { color: #e67e22; }
         .hint { text-align: center; color: #8899aa; font-size: 13px; margin-bottom: 12px; }
+        .toggle-btn { display: block; margin: 0 auto 8px; padding: 6px 14px; background: #16213e;
+                      color: #8899aa; border: 1px solid #333; border-radius: 6px; font-size: 12px;
+                      cursor: pointer; }
+        .toggle-btn:hover { background: #1a2744; }
 {% endblock %}
 
 {% block content %}
@@ -83,7 +87,10 @@
             </div>
 
             <div class="hand-center">
-                <img src="{{ url_for('static', filename=image_file) }}" alt="Annotated">
+                <img id="center-img" src="{{ url_for('static', filename=image_file) }}" alt="Annotated"
+                     data-annotated="{{ url_for('static', filename=image_file) }}"
+                     data-original="{{ original_image_url }}">
+                <button type="button" class="toggle-btn" id="toggle-annotations">Hide annotations</button>
             </div>
 
             <div class="hand hand-east">
@@ -177,5 +184,14 @@ inputs.forEach(inp => {
 });
 
 updateCount();
+
+const toggleBtn = document.getElementById('toggle-annotations');
+const centerImg = document.getElementById('center-img');
+let showingAnnotated = true;
+toggleBtn.addEventListener('click', function() {
+    showingAnnotated = !showingAnnotated;
+    centerImg.src = showingAnnotated ? centerImg.dataset.annotated : centerImg.dataset.original;
+    toggleBtn.textContent = showingAnnotated ? 'Hide annotations' : 'Show annotations';
+});
 </script>
 {% endblock %}
