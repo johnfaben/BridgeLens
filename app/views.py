@@ -98,8 +98,11 @@ def process_sse(upload_id):
     if not upload:
         return 'Not found', 404
 
+    # Capture what we need before entering the generator
+    stored_filename = upload.stored_filename
+
     def generate():
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], upload.stored_filename)
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], stored_filename)
 
         yield f"data: {json.dumps({'stage': 'detecting', 'message': 'Detecting card corners...'})}\n\n"
 
@@ -119,8 +122,11 @@ def process_sse(upload_id):
 
         if not detections:
             os.remove(file_path)
-            db.session.delete(upload)
-            db.session.commit()
+            # Re-fetch upload for DB operations inside generator
+            ul = db.session.get(Upload, upload_id)
+            if ul:
+                db.session.delete(ul)
+                db.session.commit()
             yield f"data: {json.dumps({'stage': 'error', 'message': 'No cards were detected in this image. Please try again with a clearer photo, or a different image.'})}\n\n"
             return
 
@@ -135,7 +141,7 @@ def process_sse(upload_id):
 
         # Draw annotated image
         annotated = draw_detections(image_np, detections, card_positions)
-        result_filename = f"{os.path.splitext(upload.stored_filename)[0]}_result.jpg"
+        result_filename = f"{os.path.splitext(stored_filename)[0]}_result.jpg"
         output_path = os.path.join(app.config['OUTPUT_FOLDER'], result_filename)
         annotated.save(output_path)
 
@@ -147,14 +153,16 @@ def process_sse(upload_id):
 
         detected_cards = total_cards - 1 if inferred_card else total_cards
 
-        upload.result_filename = result_filename
-        upload.pbn = pbn
-        upload.bbo_url = bbo_url
-        upload.total_cards = detected_cards
-        upload.set_detections(det_records)
+        # Re-fetch upload for DB operations inside generator
+        ul = db.session.get(Upload, upload_id)
+        ul.result_filename = result_filename
+        ul.pbn = pbn
+        ul.bbo_url = bbo_url
+        ul.total_cards = detected_cards
+        ul.set_detections(det_records)
         db.session.commit()
 
-        yield f"data: {json.dumps({'stage': 'done', 'redirect': url_for('result', upload_id=upload.id), 'time_classify': round(t_classify, 1)})}\n\n"
+        yield f"data: {json.dumps({'stage': 'done', 'redirect': url_for('result', upload_id=upload_id), 'time_classify': round(t_classify, 1)})}\n\n"
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream',
                     headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
