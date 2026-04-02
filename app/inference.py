@@ -269,9 +269,10 @@ def draw_detections(image_np, detections, card_positions=None):
 
     # Scale annotations relative to image size (tuned for ~3000px wide)
     scale = max(img.size) / 3000
+    font_path = os.path.join(basedir, 'app', 'static', 'arial.ttf')
     try:
-        font = ImageFont.truetype("arial.ttf", max(10, int(35 * scale)))
-        font_large = ImageFont.truetype("arial.ttf", max(14, int(50 * scale)))
+        font = ImageFont.truetype(font_path, max(10, int(35 * scale)))
+        font_large = ImageFont.truetype(font_path, max(14, int(50 * scale)))
     except (IOError, OSError):
         font = ImageFont.load_default()
         font_large = font
