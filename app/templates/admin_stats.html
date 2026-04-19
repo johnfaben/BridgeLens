@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+
+{% block title %}Stats — BridgeLens{% endblock %}
+
+{% block extra_style %}
+.stats-wrap { max-width: 900px; }
+.stats-wrap h2 { margin-bottom: 6px; }
+.stats-wrap .range { color: #8899aa; font-size: 13px; margin-bottom: 20px; }
+.stats-wrap .range a { margin-right: 10px; }
+.stats-wrap .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+                     gap: 10px; margin-bottom: 24px; }
+.stats-wrap .card { background: #16213e; border: 1px solid #222; border-radius: 6px; padding: 12px; }
+.stats-wrap .card .label { font-size: 12px; color: #8899aa; text-transform: uppercase; letter-spacing: 0.5px; }
+.stats-wrap .card .value { font-size: 22px; font-weight: bold; margin-top: 4px; }
+.stats-wrap h3 { margin: 16px 0 8px; font-size: 15px; color: #eee; }
+.stats-wrap table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 20px; }
+.stats-wrap th, .stats-wrap td { padding: 6px 10px; text-align: left; border-bottom: 1px solid #222; }
+.stats-wrap th { color: #8899aa; font-weight: normal; font-size: 12px; text-transform: uppercase; }
+.stats-wrap td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.stats-wrap .funnel-bar { background: #1f3557; height: 8px; border-radius: 4px; overflow: hidden; }
+.stats-wrap .funnel-bar > div { background: #5dade2; height: 100%; }
+.stats-wrap code { font-size: 12px; color: #b8c7d8; word-break: break-all; }
+{% endblock %}
+
+{% block content %}
+<div class="stats-wrap">
+    <h2>Stats</h2>
+    <div class="range">
+        Last {{ days }} days —
+        <a href="{{ url_for('admin_stats', days=1) }}">1d</a>
+        <a href="{{ url_for('admin_stats', days=7) }}">7d</a>
+        <a href="{{ url_for('admin_stats', days=30) }}">30d</a>
+        <a href="{{ url_for('admin_stats', days=90) }}">90d</a>
+    </div>
+
+    <div class="cards">
+        <div class="card"><div class="label">Sessions</div><div class="value">{{ unique_sessions }}</div></div>
+        <div class="card"><div class="label">Users</div><div class="value">{{ unique_users }}</div></div>
+        <div class="card"><div class="label">New users</div><div class="value">{{ new_users }}</div></div>
+        <div class="card"><div class="label">Events</div><div class="value">{{ total_events }}</div></div>
+        <div class="card">
+            <div class="label">Inference p50</div>
+            <div class="value">{% if p50_inference %}{{ '%.1f'|format(p50_inference) }}s{% else %}—{% endif %}</div>
+        </div>
+        <div class="card">
+            <div class="label">Inference p95</div>
+            <div class="value">{% if p95_inference %}{{ '%.1f'|format(p95_inference) }}s{% else %}—{% endif %}</div>
+        </div>
+        <div class="card">
+            <div class="label">Failure rate</div>
+            <div class="value">{% if failure_rate is not none %}{{ '%.0f'|format(failure_rate * 100) }}%{% else %}—{% endif %}</div>
+        </div>
+        <div class="card"><div class="label">Inferences</div><div class="value">{{ n_inferences }}</div></div>
+    </div>
+
+    <h3>Funnel (unique sessions)</h3>
+    <table>
+        <thead><tr><th>Step</th><th class="num">Sessions</th><th class="num">Events</th><th></th></tr></thead>
+        <tbody>
+        {% set top = funnel[0][1] if funnel and funnel[0][1] else 1 %}
+        {% for label, sessions, events in funnel %}
+            <tr>
+                <td>{{ label }}</td>
+                <td class="num">{{ sessions }}</td>
+                <td class="num">{{ events }}</td>
+                <td style="width: 40%;">
+                    <div class="funnel-bar"><div style="width: {{ (sessions / top * 100) if top else 0 }}%;"></div></div>
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+
+    <h3>Events by type</h3>
+    <table>
+        <thead><tr><th>Type</th><th class="num">Count</th></tr></thead>
+        <tbody>
+        {% for t, c in counts_by_type.items()|sort(attribute=1, reverse=true) %}
+            <tr><td>{{ t }}</td><td class="num">{{ c }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+
+    <h3>Daily timeline</h3>
+    <table>
+        <thead><tr><th>Day</th><th class="num">Visits</th><th class="num">Uploads</th><th class="num">Completed</th><th class="num">Failed</th></tr></thead>
+        <tbody>
+        {% for day, by_type in timeline_rows %}
+            <tr>
+                <td>{{ day }}</td>
+                <td class="num">{{ by_type.get('page_view', 0) }}</td>
+                <td class="num">{{ by_type.get('upload_submitted', 0) }}</td>
+                <td class="num">{{ by_type.get('inference_completed', 0) }}</td>
+                <td class="num">{{ by_type.get('inference_failed', 0) }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+
+    <h3>Recent events (50)</h3>
+    <table>
+        <thead><tr><th>When</th><th>Type</th><th>User</th><th>Upload</th><th>Data</th></tr></thead>
+        <tbody>
+        {% for ev in recent %}
+            <tr>
+                <td>{{ ev.created_at.strftime('%m-%d %H:%M') if ev.created_at else '' }}</td>
+                <td>{{ ev.event_type }}</td>
+                <td>{{ ev.user_id or '—' }}</td>
+                <td>{{ ev.upload_id or '—' }}</td>
+                <td><code>{{ ev.data or '' }}</code></td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

@@ -23,6 +23,6 @@ OAUTH_CREDENTIALS = {
 
 RESEND_API_KEY = os.environ.get('RESEND_API_KEY')
 
-ADMINS = [os.environ.get('ADMIN_EMAIL', 'admin@example.com')]
+ADMINS = [e.strip() for e in os.environ.get('ADMIN_EMAILS', os.environ.get('ADMIN_EMAIL', '')).split(',') if e.strip()]
 
 MAX_CONTENT_LENGTH = 20 * 1024 * 1024  # 20 MB upload limit
