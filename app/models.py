@@ -69,3 +69,22 @@ class Upload(db.Model):
 
     def __repr__(self):
         return '<Upload %r>' % self.original_filename
+
+
+class Event(db.Model):
+    __tablename__ = 'event'
+    id = db.Column(db.Integer, primary_key=True)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    event_type = db.Column(db.String(64), index=True, nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True, index=True)
+    session_id = db.Column(db.String(64), index=True, nullable=True)
+    upload_id = db.Column(db.Integer, db.ForeignKey('upload.id'), nullable=True, index=True)
+    data = db.Column(db.Text, nullable=True)
+
+    def get_data(self):
+        if not self.data:
+            return {}
+        return json.loads(self.data)
+
+    def __repr__(self):
+        return '<Event %s>' % self.event_type

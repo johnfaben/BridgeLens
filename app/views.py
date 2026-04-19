@@ -12,9 +12,11 @@ from PIL import Image
 from werkzeug.utils import secure_filename
 
 from app import app, db, lm
-from app.models import User, Upload
+from app.models import User, Upload, Event
 from app.oauth import OAuthSignIn
 from app.email import send_magic_link
+from app.analytics import log_event, log_event_commit, _session_id
+from app.decorators import admin_required
 from app.inference import (
     load_image, detect_corners, classify_corners, detections_to_four_hands,
     hands_to_pbn, hands_to_bbo_url, hand_to_display, draw_detections,
@@ -39,6 +41,8 @@ def before_request():
 
 @app.route('/')
 def upload_form():
+    log_event('page_view', data={'path': '/', 'referrer': request.referrer})
+    db.session.commit()
     return render_template('upload.html')
 
 
@@ -79,6 +83,10 @@ def infer_image():
     db.session.add(upload)
     db.session.commit()
 
+    log_event('upload_submitted', upload_id=upload.id,
+              data={'training_consent': training_consent})
+    db.session.commit()
+
     return redirect(url_for('processing', upload_id=upload.id))
 
 
@@ -100,6 +108,8 @@ def process_sse(upload_id):
 
     # Capture what we need before entering the generator
     stored_filename = upload.stored_filename
+    ev_session_id = _session_id()
+    ev_user_id = current_user.id if current_user.is_authenticated else None
 
     def generate():
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], stored_filename)
@@ -127,6 +137,11 @@ def process_sse(upload_id):
             if ul:
                 db.session.delete(ul)
                 db.session.commit()
+            log_event_commit('inference_failed', upload_id=upload_id,
+                             user_id=ev_user_id, session_id=ev_session_id,
+                             data={'reason': 'no_detections',
+                                   'time_detect': round(t_detect, 2),
+                                   'time_classify': round(t_classify, 2)})
             yield f"data: {json.dumps({'stage': 'error', 'message': 'No cards were detected in this image. Please try again with a clearer photo, or a different image.'})}\n\n"
             return
 
@@ -162,6 +177,14 @@ def process_sse(upload_id):
         ul.set_detections(det_records)
         db.session.commit()
 
+        log_event_commit('inference_completed', upload_id=upload_id,
+                         user_id=ev_user_id, session_id=ev_session_id,
+                         data={'time_detect': round(t_detect, 2),
+                               'time_classify': round(t_classify, 2),
+                               'n_corners': n_corners,
+                               'detected_cards': detected_cards,
+                               'inferred_card': bool(inferred_card)})
+
         yield f"data: {json.dumps({'stage': 'done', 'redirect': url_for('result', upload_id=upload_id), 'time_classify': round(t_classify, 1)})}\n\n"
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream',
@@ -175,6 +198,9 @@ def result(upload_id):
     if not upload or not upload.pbn:
         flash('Upload not found.')
         return redirect(url_for('upload_form'))
+
+    log_event('result_viewed', upload_id=upload_id)
+    db.session.commit()
 
     hands_lists = _parse_pbn_to_hands_lists(upload.pbn)
     display_hands = {p: hand_to_display(hands_lists[p]) for p in 'nesw'}
@@ -310,6 +336,11 @@ def save_edit(upload_id):
 
     manually_added = max(0, edited_total - detected_cards)
 
+    log_event('edit_saved', upload_id=upload_id,
+              data={'manually_added': manually_added,
+                    'total_cards': edited_total})
+    db.session.commit()
+
     flash('Hands updated.')
     return render_template(
         'result.html',
@@ -356,6 +387,9 @@ def correct_corners(upload_id):
     if not upload:
         flash('Upload not found.')
         return redirect(url_for('upload_form'))
+
+    log_event('correction_started', upload_id=upload_id)
+    db.session.commit()
 
     detections = upload.get_detections()
 
@@ -504,6 +538,12 @@ def correct_save(upload_id):
 
     manually_added = max(0, total_cards - detected_cards)
 
+    log_event('correction_saved', upload_id=upload_id,
+              data={'n_corrections': len(corrections),
+                    'manually_added': manually_added,
+                    'total_cards': total_cards})
+    db.session.commit()
+
     flash('Corrections saved — thank you!')
     return render_template(
         'result.html',
@@ -604,6 +644,8 @@ def magic_link_request():
         s = URLSafeTimedSerializer(app.config['SECRET_KEY'])
         token = s.dumps(email, salt='magic-link')
         send_magic_link(email, token)
+        log_event('login_requested', data={'method': 'magic_link'})
+        db.session.commit()
     flash('Check your inbox! We\'ve sent a login link to %s.' % email)
     return redirect(url_for('login'))
 
@@ -627,6 +669,9 @@ def magic_link_verify(token):
         db.session.add(user)
         db.session.commit()
     login_user(user, True)
+    log_event('login_success', user_id=user.id,
+              data={'method': 'magic_link', 'is_new': is_new})
+    db.session.commit()
     if is_new:
         flash('Welcome to BridgeLens!')
     else:
@@ -659,8 +704,102 @@ def oauth_callback(provider):
         db.session.add(user)
         db.session.commit()
     login_user(user, True)
+    log_event('login_success', user_id=user.id,
+              data={'method': provider, 'is_new': is_new})
+    db.session.commit()
     if is_new:
         flash('Welcome to BridgeLens!')
     else:
         flash('Welcome back!')
     return redirect(url_for('upload_form'))
+
+
+# --- Admin ---
+
+def _percentile(values, pct):
+    if not values:
+        return None
+    s = sorted(values)
+    k = (len(s) - 1) * pct
+    lo = int(k)
+    hi = min(lo + 1, len(s) - 1)
+    if lo == hi:
+        return s[lo]
+    return s[lo] + (s[hi] - s[lo]) * (k - lo)
+
+
+@app.route('/admin/stats')
+@admin_required
+def admin_stats():
+    from datetime import timedelta
+    try:
+        days = max(1, min(90, int(request.args.get('days', 7))))
+    except ValueError:
+        days = 7
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+
+    events = Event.query.filter(Event.created_at >= since).all()
+
+    counts_by_type = {}
+    sessions_by_type = {}
+    for ev in events:
+        counts_by_type[ev.event_type] = counts_by_type.get(ev.event_type, 0) + 1
+        sessions_by_type.setdefault(ev.event_type, set()).add(ev.session_id)
+    unique_sessions_by_type = {k: len(v) for k, v in sessions_by_type.items()}
+
+    funnel_order = [
+        ('page_view', 'Visited'),
+        ('upload_submitted', 'Uploaded'),
+        ('inference_completed', 'Got a result'),
+        ('result_viewed', 'Viewed result'),
+        ('correction_started', 'Started correction'),
+        ('correction_saved', 'Saved correction'),
+        ('edit_saved', 'Saved edit'),
+    ]
+    funnel = [(label, unique_sessions_by_type.get(t, 0), counts_by_type.get(t, 0))
+              for t, label in funnel_order]
+
+    inf_times = []
+    for ev in events:
+        if ev.event_type == 'inference_completed':
+            d = ev.get_data()
+            t = (d.get('time_detect') or 0) + (d.get('time_classify') or 0)
+            if t:
+                inf_times.append(t)
+
+    total_inference_attempts = counts_by_type.get('inference_completed', 0) + counts_by_type.get('inference_failed', 0)
+    failure_rate = None
+    if total_inference_attempts:
+        failure_rate = counts_by_type.get('inference_failed', 0) / total_inference_attempts
+
+    logins = [e for e in events if e.event_type == 'login_success']
+    new_users = sum(1 for e in logins if (e.get_data() or {}).get('is_new'))
+
+    # Daily timeline (YYYY-MM-DD → count per type)
+    timeline = {}
+    for ev in events:
+        if not ev.created_at:
+            continue
+        day = ev.created_at.strftime('%Y-%m-%d')
+        timeline.setdefault(day, {}).setdefault(ev.event_type, 0)
+        timeline[day][ev.event_type] += 1
+    timeline_rows = sorted(timeline.items())
+
+    recent = Event.query.filter(Event.created_at >= since).order_by(Event.created_at.desc()).limit(50).all()
+
+    return render_template(
+        'admin_stats.html',
+        days=days,
+        total_events=len(events),
+        unique_sessions=len({e.session_id for e in events if e.session_id}),
+        unique_users=len({e.user_id for e in events if e.user_id}),
+        counts_by_type=counts_by_type,
+        funnel=funnel,
+        p50_inference=_percentile(inf_times, 0.5),
+        p95_inference=_percentile(inf_times, 0.95),
+        n_inferences=len(inf_times),
+        failure_rate=failure_rate,
+        new_users=new_users,
+        timeline_rows=timeline_rows,
+        recent=recent,
+    )
