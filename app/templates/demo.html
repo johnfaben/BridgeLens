@@ -4,32 +4,32 @@
 
 {% block extra_style %}
         h2 { font-size: 20px; margin-bottom: 6px; text-align: center; }
-        .step-label { color: #8899aa; font-size: 13px; text-transform: uppercase; letter-spacing: 1px;
+        .step-label { color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: 1px;
                       margin: 20px 0 8px; }
-        .step-desc { color: #ccc; font-size: 14px; margin-bottom: 12px; }
+        .step-desc { color: var(--text); font-size: 14px; margin-bottom: 12px; }
         .demo-image { max-width: 100%; border-radius: 8px; margin-bottom: 16px; }
 
-        .info { text-align: center; color: #8899aa; font-size: 14px; margin: 8px 0; }
+        .info { text-align: center; color: var(--muted); font-size: 14px; margin: 8px 0; }
 
-        .pbn-box { background: #16213e; padding: 12px; border-radius: 6px; margin: 12px 0;
+        .pbn-box { background: var(--panel); padding: 12px; border-radius: 6px; margin: 12px 0;
                    font-family: monospace; font-size: 13px; word-break: break-all;
-                   cursor: pointer; position: relative; }
-        .pbn-box:hover { background: #1a2744; }
-        .copy-hint { position: absolute; right: 8px; top: 8px; color: #555; font-size: 11px; }
-        .copied { color: #1b8a2e !important; }
+                   cursor: pointer; position: relative; color: var(--text); }
+        .pbn-box:hover { background: var(--panel-hover); }
+        .copy-hint { position: absolute; right: 8px; top: 8px; color: var(--muted); font-size: 11px; }
+        .copied { color: var(--success) !important; }
 
         .bbo-frame { width: 100%; height: 340px; border: none; border-radius: 8px;
                      background: #fff; margin: 12px 0; }
 
         .bbo-link { display: block; text-align: center; margin: 8px 0; padding: 12px;
-                    background: #0f3460; color: #eee; text-decoration: none; border-radius: 8px;
+                    background: var(--heading); color: #fff; text-decoration: none; border-radius: 8px;
                     font-size: 16px; }
-        .bbo-link:hover { background: #1a5276; }
+        .bbo-link:hover { background: #333; }
 
         .try-link { display: block; text-align: center; margin: 20px 0; padding: 14px;
-                    background: #1b8a2e; color: #eee; text-decoration: none; border-radius: 8px;
+                    background: var(--success); color: #fff; text-decoration: none; border-radius: 8px;
                     font-size: 18px; }
-        .try-link:hover { background: #23a33a; }
+        .try-link:hover { background: var(--success-hover); }
 {% endblock %}
 
 {% block content %}

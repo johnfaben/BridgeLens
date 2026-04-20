@@ -4,25 +4,25 @@
 
 {% block extra_style %}
         h2 { font-size: 18px; margin-bottom: 4px; text-align: center; }
-        .instructions { color: #8899aa; font-size: 13px; text-align: center; margin-bottom: 16px; }
+        .instructions { color: var(--muted); font-size: 13px; text-align: center; margin-bottom: 16px; }
         .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
                      gap: 10px; margin-bottom: 20px; }
-        .card-item { background: #16213e; border-radius: 8px; padding: 6px; text-align: center; }
+        .card-item { background: var(--panel); border-radius: 8px; padding: 6px; text-align: center; }
         .card-item img { width: 100%; border-radius: 4px; object-fit: contain; }
         .card-item select { width: 100%; margin-top: 6px; padding: 6px; border-radius: 4px;
-                            background: #1a1a2e; color: #eee; border: 1px solid #333;
+                            background: #fff; color: var(--text); border: 1px solid var(--border);
                             font-size: 14px; }
-        .card-item .conf { color: #8899aa; font-size: 11px; margin-top: 2px; }
-        .card-item.low-conf { border: 2px solid #e67e22; }
-        .card-item.user-added { border: 2px solid #3498db; }
+        .card-item .conf { color: var(--muted); font-size: 11px; margin-top: 2px; }
+        .card-item.low-conf { border: 2px solid var(--warning); }
+        .card-item.user-added { border: 2px solid #666; }
         .controls { display: flex; gap: 8px; justify-content: center; margin: 16px 0; }
         .controls button { padding: 10px 20px; border-radius: 6px; border: none; font-size: 14px;
                            cursor: pointer; }
-        .btn-save { background: #1b8a2e; color: #eee; }
-        .btn-save:hover { background: #23a33a; }
-        .btn-back { background: #16213e; color: #eee; border: 1px solid #333 !important; }
-        .btn-back:hover { background: #1a2744; }
-        .counter { text-align: center; color: #8899aa; font-size: 14px; margin: 8px 0; }
+        .btn-save { background: var(--success); color: #fff; }
+        .btn-save:hover { background: var(--success-hover); }
+        .btn-back { background: var(--panel); color: var(--text); border: 1px solid var(--border) !important; }
+        .btn-back:hover { background: var(--panel-hover); }
+        .counter { text-align: center; color: var(--muted); font-size: 14px; margin: 8px 0; }
 {% endblock %}
 
 {% block content %}

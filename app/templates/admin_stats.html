@@ -5,21 +5,21 @@
 {% block extra_style %}
 .stats-wrap { max-width: 900px; }
 .stats-wrap h2 { margin-bottom: 6px; }
-.stats-wrap .range { color: #8899aa; font-size: 13px; margin-bottom: 20px; }
+.stats-wrap .range { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
 .stats-wrap .range a { margin-right: 10px; }
 .stats-wrap .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
                      gap: 10px; margin-bottom: 24px; }
-.stats-wrap .card { background: #16213e; border: 1px solid #222; border-radius: 6px; padding: 12px; }
-.stats-wrap .card .label { font-size: 12px; color: #8899aa; text-transform: uppercase; letter-spacing: 0.5px; }
-.stats-wrap .card .value { font-size: 22px; font-weight: bold; margin-top: 4px; }
-.stats-wrap h3 { margin: 16px 0 8px; font-size: 15px; color: #eee; }
+.stats-wrap .card { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 12px; }
+.stats-wrap .card .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.stats-wrap .card .value { font-size: 22px; font-weight: bold; margin-top: 4px; color: var(--heading); }
+.stats-wrap h3 { margin: 16px 0 8px; font-size: 15px; color: var(--heading); }
 .stats-wrap table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 20px; }
-.stats-wrap th, .stats-wrap td { padding: 6px 10px; text-align: left; border-bottom: 1px solid #222; }
-.stats-wrap th { color: #8899aa; font-weight: normal; font-size: 12px; text-transform: uppercase; }
+.stats-wrap th, .stats-wrap td { padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+.stats-wrap th { color: var(--muted); font-weight: normal; font-size: 12px; text-transform: uppercase; }
 .stats-wrap td.num { text-align: right; font-variant-numeric: tabular-nums; }
-.stats-wrap .funnel-bar { background: #1f3557; height: 8px; border-radius: 4px; overflow: hidden; }
-.stats-wrap .funnel-bar > div { background: #5dade2; height: 100%; }
-.stats-wrap code { font-size: 12px; color: #b8c7d8; word-break: break-all; }
+.stats-wrap .funnel-bar { background: var(--border); height: 8px; border-radius: 4px; overflow: hidden; }
+.stats-wrap .funnel-bar > div { background: var(--heading); height: 100%; }
+.stats-wrap code { font-size: 12px; color: var(--text); word-break: break-all; }
 {% endblock %}
 
 {% block content %}

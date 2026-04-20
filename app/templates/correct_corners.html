@@ -4,7 +4,7 @@
 
 {% block extra_style %}
         h2 { font-size: 18px; margin-bottom: 4px; text-align: center; }
-        .instructions { color: #8899aa; font-size: 13px; text-align: center; margin-bottom: 16px; }
+        .instructions { color: var(--muted); font-size: 13px; text-align: center; margin-bottom: 16px; }
         .canvas-wrap { position: relative; display: inline-block; width: 100%; }
         .canvas-wrap img { width: 100%; display: block; border-radius: 8px; }
         .canvas-wrap canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%;
@@ -12,11 +12,11 @@
         .controls { display: flex; gap: 8px; justify-content: center; margin: 16px 0; flex-wrap: wrap; }
         .controls button { padding: 10px 20px; border-radius: 6px; border: none; font-size: 14px;
                            cursor: pointer; }
-        .btn-next { background: #1b8a2e; color: #eee; }
-        .btn-next:hover { background: #23a33a; }
-        .btn-undo { background: #16213e; color: #eee; border: 1px solid #333 !important; }
-        .btn-undo:hover { background: #1a2744; }
-        .counter { text-align: center; color: #8899aa; font-size: 14px; margin: 8px 0; }
+        .btn-next { background: var(--success); color: #fff; }
+        .btn-next:hover { background: var(--success-hover); }
+        .btn-undo { background: var(--panel); color: var(--text); border: 1px solid var(--border) !important; }
+        .btn-undo:hover { background: var(--panel-hover); }
+        .counter { text-align: center; color: var(--muted); font-size: 14px; margin: 8px 0; }
 {% endblock %}
 
 {% block content %}
