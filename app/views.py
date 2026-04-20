@@ -15,12 +15,13 @@ from app import app, db, lm
 from app.models import User, Upload, Event
 from app.oauth import OAuthSignIn
 from app.email import send_magic_link
-from app.analytics import log_event, log_event_commit, _session_id
+from app.analytics import log_event, log_event_commit, _session_id, avg_inference_seconds
 from app.decorators import admin_required
 from app.inference import (
     load_image, detect_corners, classify_corners, detections_to_four_hands,
     hands_to_pbn, hands_to_bbo_url, hand_to_display, draw_detections,
     strip_exif_and_save, ALL_CARDS, SUIT_SYMBOLS,
+    inference_slot, queue_position, queue_leave,
 )
 
 
@@ -114,78 +115,100 @@ def process_sse(upload_id):
     def generate():
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], stored_filename)
 
-        yield f"data: {json.dumps({'stage': 'detecting', 'message': 'Detecting card corners...'})}\n\n"
+        # Serialize inference per-worker so page loads stay responsive.
+        got_slot = inference_slot.acquire(blocking=False)
+        queued_at = None
+        if not got_slot:
+            queued_at = time.time()
+            position = queue_position()
+            try:
+                avg = avg_inference_seconds()
+                estimate_s = int((position * avg + 9) // 10) * 10  # round up to nearest 10s
+                yield f"data: {json.dumps({'stage': 'queued', 'message': f'Another image is being processed — estimated wait ~{estimate_s}s (position {position})...'})}\n\n"
+                inference_slot.acquire()
+            finally:
+                queue_leave()
+        try:
+            if queued_at is not None:
+                wait_s = time.time() - queued_at
+                log_event_commit('inference_queued', upload_id=upload_id,
+                                 user_id=ev_user_id, session_id=ev_session_id,
+                                 data={'wait_s': round(wait_s, 2)})
 
-        t0 = time.time()
-        image_np = load_image(file_path)
-        corners = detect_corners(image_np)
-        t_detect = time.time() - t0
+            yield f"data: {json.dumps({'stage': 'detecting', 'message': 'Detecting card corners...'})}\n\n"
 
-        n_corners = len(corners)
-        img_h, img_w = image_np.shape[:2]
-        corner_bboxes = [list(c['bbox']) for c in corners]
-        yield f"data: {json.dumps({'stage': 'classifying', 'message': f'Classifying {n_corners} corners...', 'time_detect': round(t_detect, 1), 'corners': corner_bboxes, 'img_w': img_w, 'img_h': img_h})}\n\n"
+            t0 = time.time()
+            image_np = load_image(file_path)
+            corners = detect_corners(image_np)
+            t_detect = time.time() - t0
 
-        t0 = time.time()
-        detections = classify_corners(image_np, corners)
-        t_classify = time.time() - t0
+            n_corners = len(corners)
+            img_h, img_w = image_np.shape[:2]
+            corner_bboxes = [list(c['bbox']) for c in corners]
+            yield f"data: {json.dumps({'stage': 'classifying', 'message': f'Classifying {n_corners} corners...', 'time_detect': round(t_detect, 1), 'corners': corner_bboxes, 'img_w': img_w, 'img_h': img_h})}\n\n"
 
-        if not detections:
-            os.remove(file_path)
+            t0 = time.time()
+            detections = classify_corners(image_np, corners)
+            t_classify = time.time() - t0
+
+            if not detections:
+                os.remove(file_path)
+                # Re-fetch upload for DB operations inside generator
+                ul = db.session.get(Upload, upload_id)
+                if ul:
+                    db.session.delete(ul)
+                    db.session.commit()
+                log_event_commit('inference_failed', upload_id=upload_id,
+                                 user_id=ev_user_id, session_id=ev_session_id,
+                                 data={'reason': 'no_detections',
+                                       'time_detect': round(t_detect, 2),
+                                       'time_classify': round(t_classify, 2)})
+                yield f"data: {json.dumps({'stage': 'error', 'message': 'No cards were detected in this image. Please try again with a clearer photo, or a different image.'})}\n\n"
+                return
+
+            yield f"data: {json.dumps({'stage': 'assigning', 'message': 'Assigning cards to hands...', 'time_classify': round(t_classify, 1)})}\n\n"
+
+            hands, card_positions, inferred_card = detections_to_four_hands(detections)
+
+            pbn = hands_to_pbn(hands)
+            bbo_url = hands_to_bbo_url(hands)
+
+            total_cards = sum(len(hands[p][s]) for p in 'nesw' for s in 'SHDC')
+
+            # Draw annotated image
+            annotated = draw_detections(image_np, detections, card_positions)
+            result_filename = f"{os.path.splitext(stored_filename)[0]}_result.jpg"
+            output_path = os.path.join(app.config['OUTPUT_FOLDER'], result_filename)
+            annotated.save(output_path)
+
+            det_records = [
+                {'bbox': list(d['bbox']), 'class_name': d['class_name'],
+                 'confidence': round(d['confidence'], 3)}
+                for d in detections
+            ]
+
+            detected_cards = total_cards - 1 if inferred_card else total_cards
+
             # Re-fetch upload for DB operations inside generator
             ul = db.session.get(Upload, upload_id)
-            if ul:
-                db.session.delete(ul)
-                db.session.commit()
-            log_event_commit('inference_failed', upload_id=upload_id,
+            ul.result_filename = result_filename
+            ul.pbn = pbn
+            ul.bbo_url = bbo_url
+            ul.total_cards = detected_cards
+            ul.set_detections(det_records)
+            db.session.commit()
+
+            log_event_commit('inference_completed', upload_id=upload_id,
                              user_id=ev_user_id, session_id=ev_session_id,
-                             data={'reason': 'no_detections',
-                                   'time_detect': round(t_detect, 2),
-                                   'time_classify': round(t_classify, 2)})
-            yield f"data: {json.dumps({'stage': 'error', 'message': 'No cards were detected in this image. Please try again with a clearer photo, or a different image.'})}\n\n"
-            return
+                             data={'time_detect': round(t_detect, 2),
+                                   'time_classify': round(t_classify, 2),
+                                   'n_corners': n_corners,
+                                   'detected_cards': detected_cards,
+                                   'inferred_card': bool(inferred_card)})
 
-        yield f"data: {json.dumps({'stage': 'assigning', 'message': 'Assigning cards to hands...', 'time_classify': round(t_classify, 1)})}\n\n"
-
-        hands, card_positions, inferred_card = detections_to_four_hands(detections)
-
-        pbn = hands_to_pbn(hands)
-        bbo_url = hands_to_bbo_url(hands)
-
-        total_cards = sum(len(hands[p][s]) for p in 'nesw' for s in 'SHDC')
-
-        # Draw annotated image
-        annotated = draw_detections(image_np, detections, card_positions)
-        result_filename = f"{os.path.splitext(stored_filename)[0]}_result.jpg"
-        output_path = os.path.join(app.config['OUTPUT_FOLDER'], result_filename)
-        annotated.save(output_path)
-
-        det_records = [
-            {'bbox': list(d['bbox']), 'class_name': d['class_name'],
-             'confidence': round(d['confidence'], 3)}
-            for d in detections
-        ]
-
-        detected_cards = total_cards - 1 if inferred_card else total_cards
-
-        # Re-fetch upload for DB operations inside generator
-        ul = db.session.get(Upload, upload_id)
-        ul.result_filename = result_filename
-        ul.pbn = pbn
-        ul.bbo_url = bbo_url
-        ul.total_cards = detected_cards
-        ul.set_detections(det_records)
-        db.session.commit()
-
-        log_event_commit('inference_completed', upload_id=upload_id,
-                         user_id=ev_user_id, session_id=ev_session_id,
-                         data={'time_detect': round(t_detect, 2),
-                               'time_classify': round(t_classify, 2),
-                               'n_corners': n_corners,
-                               'detected_cards': detected_cards,
-                               'inferred_card': bool(inferred_card)})
-
-        yield f"data: {json.dumps({'stage': 'done', 'redirect': url_for('result', upload_id=upload_id), 'time_classify': round(t_classify, 1)})}\n\n"
+            yield f"data: {json.dumps({'stage': 'done', 'redirect': url_for('result', upload_id=upload_id), 'time_classify': round(t_classify, 1)})}\n\n"
+        finally:
+            inference_slot.release()
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream',
                     headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})

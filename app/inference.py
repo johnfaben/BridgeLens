@@ -1,6 +1,7 @@
 """Card detection and classification inference logic."""
 
 import os
+import threading
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -24,6 +25,26 @@ ALL_CARDS = {f"{r}{s}" for s in 'SHDC'
 
 CLASSIFY_THRESHOLD = 0.30
 POSITION_THRESHOLD = 0.50
+
+# Serializes inference within a single worker process. Other worker
+# processes have their own instance, so global concurrency = num_workers.
+inference_slot = threading.Semaphore(1)
+_queue_depth_lock = threading.Lock()
+_queue_depth = 0  # number of requests waiting on inference_slot
+
+
+def queue_position():
+    """Return 1-based position for a new waiter (1 = next up)."""
+    global _queue_depth
+    with _queue_depth_lock:
+        _queue_depth += 1
+        return _queue_depth
+
+
+def queue_leave():
+    global _queue_depth
+    with _queue_depth_lock:
+        _queue_depth -= 1
 
 
 def get_classifier():

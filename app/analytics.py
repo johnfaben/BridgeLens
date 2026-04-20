@@ -60,3 +60,23 @@ def log_event_commit(event_type, upload_id=None, data=None, user_id=None, sessio
     except Exception as e:
         app.logger.warning('log_event_commit failed: %s', e)
         db.session.rollback()
+
+
+def avg_inference_seconds(default=12.0, n=50):
+    """Average end-to-end inference time from recent completed events."""
+    try:
+        rows = (Event.query
+                .filter_by(event_type='inference_completed')
+                .order_by(Event.id.desc())
+                .limit(n).all())
+        times = []
+        for r in rows:
+            d = r.get_data()
+            t = (d.get('time_detect') or 0) + (d.get('time_classify') or 0)
+            if t > 0:
+                times.append(t)
+        if times:
+            return sum(times) / len(times)
+    except Exception as e:
+        app.logger.warning('avg_inference_seconds failed: %s', e)
+    return default
