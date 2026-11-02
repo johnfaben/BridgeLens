@@ -9,3 +9,5 @@ tmp/
 *.db
 DEPLOY.md
 SETUP_TODO.md
+docs/
+training_data/

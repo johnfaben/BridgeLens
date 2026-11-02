@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+
+{% block title %}Corrections — BridgeLens{% endblock %}
+
+{% block extra_style %}
+        h2 { margin-bottom: 4px; }
+        .summary { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
+        .next-link { display: inline-block; margin-bottom: 20px; padding: 10px 18px;
+                     background: var(--success); color: #fff; text-decoration: none; border-radius: 8px; }
+        .next-link:hover { background: var(--success-hover); }
+        table.queue { width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 28px; }
+        table.queue th { text-align: left; color: var(--muted); font-weight: normal; font-size: 12px;
+                         border-bottom: 1px solid var(--border); padding: 4px 6px; }
+        table.queue td { border-bottom: 1px solid var(--border); padding: 6px; vertical-align: middle; }
+        table.queue tr.excluded td { color: var(--muted); }
+        table.queue tr.done td.status { color: var(--success); }
+        table.queue td.status { white-space: nowrap; }
+        .thumb { width: 72px; height: 54px; object-fit: cover; border-radius: 4px; display: block; }
+        .fname { font-family: monospace; font-size: 12px; word-break: break-all; }
+{% endblock %}
+
+{% block content %}
+<h2>Hands to correct</h2>
+<p class="summary">{{ n_todo }} still to do in the training set.</p>
+{% if next_id %}
+<a class="next-link" href="{{ url_for('correct_corners', upload_id=next_id) }}">Next hand to correct (#{{ next_id }})</a>
+{% endif %}
+
+{% macro queue_table(rows, show_source) %}
+<table class="queue">
+    <tr>
+        <th></th><th>#</th>{% if show_source %}<th>Source</th>{% endif %}
+        <th>Uploaded</th><th>Model</th><th>Status</th>
+    </tr>
+    {% for r in rows %}
+    {% set u = r.upload %}
+    <tr class="{{ 'excluded' if r.excluded }} {{ 'done' if r.corrected }}">
+        <td><a href="{{ url_for('correct_corners', upload_id=u.id) }}">
+            <img class="thumb" loading="lazy" src="{{ url_for('correct_crop_upload', upload_id=u.id) }}" alt=""></a></td>
+        <td><a href="{{ url_for('correct_corners', upload_id=u.id) }}">{{ u.id }}</a></td>
+        {% if show_source %}
+        <td>{{ r.entry.tag }}<br><span class="fname">server #{{ r.entry.server_id }}</span></td>
+        <td>{{ r.entry.created_at[:10] }}</td>
+        {% else %}
+        <td>{{ u.created_at.strftime('%Y-%m-%d') }}<br><span class="fname">{{ u.original_filename }}</span></td>
+        {% endif %}
+        <td>{{ u.total_cards }} cards</td>
+        <td class="status">
+            {% if r.excluded %}excluded ({{ r.entry.kind.replace('_', ' ') }})
+            {% elif r.corrected %}corrected ({{ r.corrected_cards }} cards)
+            {% else %}to do{% endif %}
+        </td>
+    </tr>
+    {% endfor %}
+</table>
+{% endmacro %}
+
+<h3>Training set</h3>
+{{ queue_table(training, true) }}
+
+{% if other %}
+<h3>Other local uploads</h3>
+{{ queue_table(other, false) }}
+{% endif %}
+{% endblock %}

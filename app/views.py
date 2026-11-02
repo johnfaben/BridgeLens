@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 import time
 
-from flask import request, render_template, redirect, url_for, flash, session, g, jsonify, Response, stream_with_context
+from flask import abort, request, render_template, redirect, url_for, flash, session, g, jsonify, Response, stream_with_context
 from flask_login import login_user, logout_user, current_user, login_required
 from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature
 from PIL import Image
@@ -16,13 +16,20 @@ from app.models import User, Upload, Event
 from app.oauth import OAuthSignIn
 from app.email import send_magic_link
 from app.analytics import log_event, log_event_commit, _session_id, avg_inference_seconds
-from app.decorators import admin_required
+from app.decorators import admin_required, local_only, local_tools_enabled, can_modify_upload
 from app.inference import (
     load_image, detect_corners, classify_corners, detections_to_four_hands,
     hands_to_pbn, hands_to_bbo_url, hand_to_display, draw_detections,
     strip_exif_and_save, ALL_CARDS, SUIT_SYMBOLS,
     inference_slot, queue_position, queue_leave,
 )
+
+
+@app.context_processor
+def inject_permissions():
+    def can_modify(upload_id):
+        return can_modify_upload(db.session.get(Upload, upload_id)) if upload_id else False
+    return {'can_modify': can_modify}
 
 
 @lm.user_loader
@@ -309,6 +316,8 @@ def edit_hands(upload_id):
     if not upload:
         flash('Upload not found.')
         return redirect(url_for('upload_form'))
+    if not can_modify_upload(upload):
+        abort(404)
 
     # Parse current PBN into editable hand strings
     hands = _parse_pbn_to_hands(upload.pbn)
@@ -329,6 +338,8 @@ def save_edit(upload_id):
     if not upload:
         flash('Upload not found.')
         return redirect(url_for('upload_form'))
+    if not can_modify_upload(upload):
+        abort(404)
 
     from app.inference import hands_to_pbn, hands_to_bbo_url, hand_to_display
 
@@ -403,6 +414,64 @@ def _parse_pbn_to_hands_lists(pbn):
     return {p: {s: list(raw[p][s]) for s in 'SHDC'} for p in 'nesw'}
 
 
+# --- Correction workflow (index and queue are local only) ---
+
+SERVER_MANIFEST_PATH = os.path.join(app.root_path, '..', 'training_data', 'server_manifest.json')
+EXCLUDED_KINDS = {'printed_diagram', 'online_screenshot'}
+
+
+def _load_server_manifest():
+    """local upload id -> manifest entry (see training/pull_server_uploads.py)."""
+    if not os.path.exists(SERVER_MANIFEST_PATH):
+        return {}
+    with open(SERVER_MANIFEST_PATH) as f:
+        manifest = json.load(f)
+    return {e['local_id']: dict(e, server_id=int(sid)) for sid, e in manifest.items()}
+
+
+def _correction_queue():
+    """Upload ids pulled for training that still need correcting, in id order."""
+    manifest = _load_server_manifest()
+    ids = sorted(lid for lid, e in manifest.items()
+                 if e.get('kind', 'photo') not in EXCLUDED_KINDS)
+    corrected = {u.id for u in Upload.query.filter(Upload.id.in_(ids),
+                                                   Upload.corrections_json.isnot(None))}
+    return [i for i in ids if i not in corrected]
+
+
+def _next_to_correct(after_id=None):
+    queue = _correction_queue()
+    if not queue:
+        return None
+    later = [i for i in queue if after_id is None or i > after_id]
+    return later[0] if later else queue[0]
+
+
+@app.route('/correct')
+@local_only
+def correct_index():
+    """List uploads for correction: the training set first, then other local uploads."""
+    manifest = _load_server_manifest()
+    rows = []
+    for u in Upload.query.order_by(Upload.id).all():
+        entry = manifest.get(u.id)
+        corrections = u.get_corrections()
+        rows.append({
+            'upload': u,
+            'entry': entry,
+            'excluded': bool(entry and entry.get('kind') in EXCLUDED_KINDS),
+            'corrected': corrections is not None,
+            'corrected_cards': (len({c['class_name'] for c in corrections
+                                     if c.get('class_name') not in (None, '??')})
+                                if corrections is not None else None),
+        })
+    training = [r for r in rows if r['entry']]
+    other = [r for r in rows if not r['entry']]
+    todo = [r for r in training if not r['corrected'] and not r['excluded']]
+    return render_template('correct_index.html', training=training, other=other,
+                           n_todo=len(todo), next_id=_next_to_correct())
+
+
 @app.route('/correct/<int:upload_id>')
 def correct_corners(upload_id):
     """Step 1: Review detected corners, add missed ones, remove false positives."""
@@ -410,11 +479,20 @@ def correct_corners(upload_id):
     if not upload:
         flash('Upload not found.')
         return redirect(url_for('upload_form'))
+    if not can_modify_upload(upload):
+        abort(404)
 
     log_event('correction_started', upload_id=upload_id)
     db.session.commit()
 
-    detections = upload.get_detections()
+    # Redo starts from the saved corrections unless ?fresh=1. Saved boxes are
+    # marked reviewed so step 2 keeps their labels, including '??'.
+    previous = upload.get_corrections()
+    from_corrections = previous is not None and request.args.get('fresh') != '1'
+    if from_corrections:
+        detections = [dict(c, reviewed=True) for c in previous]
+    else:
+        detections = upload.get_detections()
 
     # Split detections into portrait (h > w) and landscape (w >= h) groups
     # to offer two box sizes matching the card orientations in this image
@@ -457,6 +535,7 @@ def correct_corners(upload_id):
         upload=upload,
         detections_json=json.dumps(detections),
         box_sizes_json=json.dumps(box_sizes),
+        from_corrections=from_corrections,
         img_w=img_w,
         img_h=img_h,
     )
@@ -469,6 +548,8 @@ def correct_classify(upload_id):
     if not upload:
         flash('Upload not found.')
         return redirect(url_for('upload_form'))
+    if not can_modify_upload(upload):
+        abort(404)
 
     # corners_json comes from step 1 — the final set of bounding boxes
     corners = json.loads(request.form.get('corners_json', '[]'))
@@ -481,7 +562,7 @@ def correct_classify(upload_id):
 
     h, w = image_np.shape[:2]
     for corner in corners:
-        if corner.get('class_name') and corner['class_name'] != '??':
+        if corner.get('reviewed') or (corner.get('class_name') and corner['class_name'] != '??'):
             continue
         x1, y1, x2, y2 = corner['bbox']
         cx1, cy1 = max(0, int(x1)), max(0, int(y1))
@@ -494,6 +575,10 @@ def correct_classify(upload_id):
         name, conf = _classify_crop_cnn(crop, classifier)
         corner['class_name'] = name
         corner['confidence'] = round(conf, 3)
+
+    # Sort least-confident first so reviewers see likely errors at the top;
+    # 100%-confidence predictions (empirically never wrong) drop to the bottom.
+    corners.sort(key=lambda c: c.get('confidence', 0.0))
 
     # Build card options for dropdowns
     card_options = ['??'] + [f"{r}{s}" for s in 'SHDC'
@@ -517,6 +602,8 @@ def correct_save(upload_id):
     if not upload:
         flash('Upload not found.')
         return redirect(url_for('upload_form'))
+    if not can_modify_upload(upload):
+        abort(404)
 
     corrections = json.loads(request.form.get('corrections_json', '[]'))
 
@@ -580,6 +667,8 @@ def correct_save(upload_id):
         upload_id=upload.id,
         missing=missing,
         manually_added=manually_added,
+        correction_mode=local_tools_enabled(),
+        next_correct_id=_next_to_correct(after_id=upload.id) if local_tools_enabled() else None,
     )
 
 
@@ -600,6 +689,8 @@ def corner_crop(upload_id):
     upload = db.session.get(Upload, upload_id)
     if not upload:
         return 'Not found', 404
+    if not can_modify_upload(upload):
+        abort(404)
 
     x1 = int(request.args.get('x1', 0))
     y1 = int(request.args.get('y1', 0))

@@ -24,6 +24,12 @@
     <p class="instructions">
         Tap to add a missed corner. Tap again to rotate it. Tap a third time to remove it.
     </p>
+    {% if from_corrections %}
+    <p class="instructions">
+        Showing your saved corrections.
+        <a href="{{ url_for('correct_corners', upload_id=upload.id, fresh=1) }}">Start again from the model's output</a>
+    </p>
+    {% endif %}
 
     <div class="canvas-wrap" id="canvas-wrap">
         <img id="base-img"
