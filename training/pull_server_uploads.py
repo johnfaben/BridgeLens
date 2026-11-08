@@ -5,8 +5,9 @@ server's detections, so it can be corrected at /correct/<local_id>. Images
 already present locally (matched by md5) are not duplicated; they are just
 mapped in the manifest.
 
-A manifest at training_data/server_manifest.json records server_id ->
-local_id plus provenance (server user, date, consent, why it was selected).
+Entries go in training_data/manifest.json (see training/manifest.py) under
+"server:<id>", with provenance (server user, date, consent, why selected).
+New entries default to split 'train'; their own deal_group.
 
 Usage:
     python -m training.pull_server_uploads --tag danny 59 60 61 63
@@ -25,10 +26,10 @@ sys.path.insert(0, ROOT)
 
 from app import app, db  # noqa: E402
 from app.models import Upload  # noqa: E402
+from training import manifest as mf  # noqa: E402
 
 SSH_HOST = 'hetzner'
 REMOTE_DIR = '/var/www/bridgelens'
-MANIFEST_PATH = os.path.join(ROOT, 'training_data', 'server_manifest.json')
 
 REMOTE_DUMP = r'''
 import hashlib, json, os, sys
@@ -67,19 +68,6 @@ def fetch_remote_records(ids):
     return json.loads(res.stdout.strip().splitlines()[-1])
 
 
-def load_manifest():
-    if os.path.exists(MANIFEST_PATH):
-        with open(MANIFEST_PATH) as f:
-            return json.load(f)
-    return {}
-
-
-def save_manifest(manifest):
-    os.makedirs(os.path.dirname(MANIFEST_PATH), exist_ok=True)
-    with open(MANIFEST_PATH, 'w') as f:
-        json.dump(manifest, f, indent=2, sort_keys=True)
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('ids', nargs='+', type=int, help='Server upload ids')
@@ -88,7 +76,7 @@ def main():
     args = parser.parse_args()
 
     records = fetch_remote_records(args.ids)
-    manifest = load_manifest()
+    manifest = mf.load()
 
     with app.app_context():
         upload_folder = app.config['UPLOAD_FOLDER']
@@ -128,8 +116,15 @@ def main():
                 upload = existing
                 status = 'exists'
 
-            manifest[str(sid)] = {
+            key = f'server:{sid}'
+            previous = manifest.get(key, {})
+            manifest[key] = {
                 'local_id': upload.id,
+                'source': 'server',
+                'server_id': sid,
+                'kind': previous.get('kind', 'photo'),
+                'split': previous.get('split', 'train'),
+                'deal_group': previous.get('deal_group', key),
                 'tag': args.tag,
                 'server_user_id': rec['user_id'],
                 'created_at': rec['created_at'],
@@ -142,8 +137,8 @@ def main():
             print(f"[{status}] server {sid} -> local {upload.id} "
                   f"({rec['total_cards']} cards, {corrected})")
 
-    save_manifest(manifest)
-    print(f"Manifest: {MANIFEST_PATH}")
+    mf.save(manifest)
+    print(f"Manifest: {mf.MANIFEST_PATH}")
 
 
 if __name__ == '__main__':

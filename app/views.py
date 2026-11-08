@@ -1,5 +1,6 @@
 import json
 import os
+import statistics
 import uuid
 from datetime import datetime, timezone
 
@@ -175,7 +176,7 @@ def process_sse(upload_id):
 
             yield f"data: {json.dumps({'stage': 'assigning', 'message': 'Assigning cards to hands...', 'time_classify': round(t_classify, 1)})}\n\n"
 
-            hands, card_positions, inferred_card = detections_to_four_hands(detections)
+            hands, card_positions, inferred_cards = detections_to_four_hands(detections)
 
             pbn = hands_to_pbn(hands)
             bbo_url = hands_to_bbo_url(hands)
@@ -194,7 +195,7 @@ def process_sse(upload_id):
                 for d in detections
             ]
 
-            detected_cards = total_cards - 1 if inferred_card else total_cards
+            detected_cards = total_cards - len(inferred_cards)
 
             # Re-fetch upload for DB operations inside generator
             ul = db.session.get(Upload, upload_id)
@@ -211,7 +212,8 @@ def process_sse(upload_id):
                                    'time_classify': round(t_classify, 2),
                                    'n_corners': n_corners,
                                    'detected_cards': detected_cards,
-                                   'inferred_card': bool(inferred_card)})
+                                   'inferred_card': bool(inferred_cards),
+                                   'n_inferred': len(inferred_cards)})
 
             yield f"data: {json.dumps({'stage': 'done', 'redirect': url_for('result', upload_id=upload_id), 'time_classify': round(t_classify, 1)})}\n\n"
         finally:
@@ -241,31 +243,22 @@ def result(upload_id):
     inferred_card = None
     inferred_card_display = None
     inferred_hand_display = None
-    # If we detected 51 and PBN has 52, one was inferred
-    if upload.total_cards == 51 and total_in_pbn == 52:
-        # Find which card was inferred by comparing detections to PBN
+    inferred_plural = False
+    # If the PBN has 52 cards but fewer were detected, the rest were placed in
+    # the one short hand: they are the PBN cards no detection was labelled as
+    if upload.total_cards and upload.total_cards < 52 and total_in_pbn == 52:
         det_cards = {d['class_name'] for d in (upload.get_detections() or [])}
-        pbn_cards = set()
-        for p in 'nesw':
-            for s in 'SHDC':
-                for r in hands_lists[p][s]:
-                    pbn_cards.add(f"{r}{s}")
-        inferred = pbn_cards - det_cards
-        if len(inferred) == 1:
-            card_name = inferred.pop()
-            # Find which hand it's in
-            for p in 'nesw':
-                for s in 'SHDC':
-                    if card_name[:-1] in hands_lists[p][s] and card_name[-1] == s:
-                        rank, suit_letter = card_name[:-1], card_name[-1]
-                        suit_symbols = {'S':'\u2660','H':'\u2665','D':'\u2666','C':'\u2663'}
-                        hand_names = {'n':'North','e':'East','s':'South','w':'West'}
-                        inferred_card = True
-                        inferred_card_display = f"{suit_symbols.get(suit_letter, suit_letter)}{rank}"
-                        inferred_hand_display = hand_names.get(p, p)
-                        break
-                if inferred_card:
-                    break
+        card_hand = {f"{r}{s}": p for p in 'nesw' for s in 'SHDC' for r in hands_lists[p][s]}
+        inferred = [c for c in card_hand if c not in det_cards]
+        hands_used = {card_hand[c] for c in inferred}
+        if len(inferred) == 52 - upload.total_cards and len(hands_used) == 1:
+            suit_symbols = {'S':'\u2660','H':'\u2665','D':'\u2666','C':'\u2663'}
+            hand_names = {'n':'North','e':'East','s':'South','w':'West'}
+            names = [f"{suit_symbols[c[-1]]}{c[:-1]}" for c in inferred]
+            inferred_card = True
+            inferred_card_display = names[0] if len(names) == 1 else ', '.join(names[:-1]) + ' and ' + names[-1]
+            inferred_hand_display = hand_names[hands_used.pop()]
+            inferred_plural = len(names) > 1
 
     return render_template(
         'result.html',
@@ -281,6 +274,7 @@ def result(upload_id):
         inferred_card=inferred_card,
         inferred_card_display=inferred_card_display,
         inferred_hand_display=inferred_hand_display,
+        inferred_plural=inferred_plural,
     )
 
 
@@ -291,7 +285,12 @@ def _compute_missing(hands):
         for s in 'SHDC':
             for r in hands[p][s]:
                 found.add(f"{r}{s}")
-    missing_cards = ALL_CARDS - found
+    return _missing_by_suit(found)
+
+
+def _missing_by_suit(found):
+    """Cards of the deck not in `found`, grouped by suit, highest rank first."""
+    missing_cards = ALL_CARDS - set(found)
     by_suit = {'S': [], 'H': [], 'D': [], 'C': []}
     rank_order = {'A':14,'K':13,'Q':12,'J':11,'T':10,'9':9,'8':8,'7':7,'6':6,'5':5,'4':4,'3':3,'2':2}
     for card in missing_cards:
@@ -414,26 +413,12 @@ def _parse_pbn_to_hands_lists(pbn):
     return {p: {s: list(raw[p][s]) for s in 'SHDC'} for p in 'nesw'}
 
 
-# --- Correction workflow (index and queue are local only) ---
-
-SERVER_MANIFEST_PATH = os.path.join(app.root_path, '..', 'training_data', 'server_manifest.json')
-EXCLUDED_KINDS = {'printed_diagram', 'online_screenshot'}
-
-
-def _load_server_manifest():
-    """local upload id -> manifest entry (see training/pull_server_uploads.py)."""
-    if not os.path.exists(SERVER_MANIFEST_PATH):
-        return {}
-    with open(SERVER_MANIFEST_PATH) as f:
-        manifest = json.load(f)
-    return {e['local_id']: dict(e, server_id=int(sid)) for sid, e in manifest.items()}
-
+# --- Correction workflow (local only; users fix hands via /edit) ---
 
 def _correction_queue():
-    """Upload ids pulled for training that still need correcting, in id order."""
-    manifest = _load_server_manifest()
-    ids = sorted(lid for lid, e in manifest.items()
-                 if e.get('kind', 'photo') not in EXCLUDED_KINDS)
+    """Manifest photos (any split) that still need correcting, in id order."""
+    from training import manifest as mf
+    ids = mf.photo_ids()
     corrected = {u.id for u in Upload.query.filter(Upload.id.in_(ids),
                                                    Upload.corrections_json.isnot(None))}
     return [i for i in ids if i not in corrected]
@@ -451,7 +436,8 @@ def _next_to_correct(after_id=None):
 @local_only
 def correct_index():
     """List uploads for correction: the training set first, then other local uploads."""
-    manifest = _load_server_manifest()
+    from training import manifest as mf
+    manifest = mf.by_local_id()
     rows = []
     for u in Upload.query.order_by(Upload.id).all():
         entry = manifest.get(u.id)
@@ -459,7 +445,7 @@ def correct_index():
         rows.append({
             'upload': u,
             'entry': entry,
-            'excluded': bool(entry and entry.get('kind') in EXCLUDED_KINDS),
+            'excluded': bool(entry and entry.get('kind') in mf.EXCLUDED_KINDS),
             'corrected': corrections is not None,
             'corrected_cards': (len({c['class_name'] for c in corrections
                                      if c.get('class_name') not in (None, '??')})
@@ -473,14 +459,13 @@ def correct_index():
 
 
 @app.route('/correct/<int:upload_id>')
+@local_only
 def correct_corners(upload_id):
     """Step 1: Review detected corners, add missed ones, remove false positives."""
     upload = db.session.get(Upload, upload_id)
     if not upload:
         flash('Upload not found.')
         return redirect(url_for('upload_form'))
-    if not can_modify_upload(upload):
-        abort(404)
 
     log_event('correction_started', upload_id=upload_id)
     db.session.commit()
@@ -498,6 +483,8 @@ def correct_corners(upload_id):
     # to offer two box sizes matching the card orientations in this image
     portrait_w, portrait_h, landscape_w, landscape_h = [], [], [], []
     for d in detections:
+        if d.get('source') == 'user':
+            continue  # sizes come from model boxes only
         w = d['bbox'][2] - d['bbox'][0]
         h = d['bbox'][3] - d['bbox'][1]
         if h > w:
@@ -507,19 +494,20 @@ def correct_corners(upload_id):
             landscape_w.append(w)
             landscape_h.append(h)
 
-    # Build box size options from whichever orientations exist
+    # Build box size options from whichever orientations exist. Median, not
+    # mean: a few oversized false positives would otherwise inflate it.
     box_sizes = []
     if portrait_w:
         box_sizes.append({
             'label': 'Vertical',
-            'w': round(sum(portrait_w) / len(portrait_w)),
-            'h': round(sum(portrait_h) / len(portrait_h)),
+            'w': round(statistics.median(portrait_w)),
+            'h': round(statistics.median(portrait_h)),
         })
     if landscape_w:
         box_sizes.append({
             'label': 'Horizontal',
-            'w': round(sum(landscape_w) / len(landscape_w)),
-            'h': round(sum(landscape_h) / len(landscape_h)),
+            'w': round(statistics.median(landscape_w)),
+            'h': round(statistics.median(landscape_h)),
         })
     if not box_sizes:
         box_sizes = [{'label': 'Default', 'w': 40, 'h': 60}]
@@ -536,20 +524,21 @@ def correct_corners(upload_id):
         detections_json=json.dumps(detections),
         box_sizes_json=json.dumps(box_sizes),
         from_corrections=from_corrections,
+        # Cards no box is labelled as: where to look for a missed corner
+        missing=_missing_by_suit(d.get('class_name') for d in detections),
         img_w=img_w,
         img_h=img_h,
     )
 
 
 @app.route('/correct/<int:upload_id>/classify', methods=['POST'])
+@local_only
 def correct_classify(upload_id):
     """Step 2: Review/correct classification of each corner."""
     upload = db.session.get(Upload, upload_id)
     if not upload:
         flash('Upload not found.')
         return redirect(url_for('upload_form'))
-    if not can_modify_upload(upload):
-        abort(404)
 
     # corners_json comes from step 1 — the final set of bounding boxes
     corners = json.loads(request.form.get('corners_json', '[]'))
@@ -557,28 +546,29 @@ def correct_classify(upload_id):
     # Classify any new corners (those without a class_name or with '??')
     img_path = os.path.join(app.config['UPLOAD_FOLDER'], upload.stored_filename)
     image_np = load_image(img_path)
-    from app.inference import get_classifier, _classify_crop_cnn
+    from app.inference import get_classifier, _classify_crop_cnn, crop_box
     classifier = get_classifier()
 
-    h, w = image_np.shape[:2]
     for corner in corners:
         if corner.get('reviewed') or (corner.get('class_name') and corner['class_name'] != '??'):
             continue
-        x1, y1, x2, y2 = corner['bbox']
-        cx1, cy1 = max(0, int(x1)), max(0, int(y1))
-        cx2, cy2 = min(w, int(x2)), min(h, int(y2))
-        if cx2 <= cx1 or cy2 <= cy1:
+        crop, _ = crop_box(image_np, corner['bbox'], classifier['crop_expand'])
+        if crop is None:
             corner['class_name'] = '??'
             corner['confidence'] = 0.0
             continue
-        crop = image_np[cy1:cy2, cx1:cx2]
         name, conf = _classify_crop_cnn(crop, classifier)
         corner['class_name'] = name
         corner['confidence'] = round(conf, 3)
 
-    # Sort least-confident first so reviewers see likely errors at the top;
-    # 100%-confidence predictions (empirically never wrong) drop to the bottom.
-    corners.sort(key=lambda c: c.get('confidence', 0.0))
+    # Cards whose corners are far apart in the photo have at least one misread
+    # corner: show those first, grouped by card, then least-confident first.
+    from app.inference import spread_cards
+    flagged = spread_cards(corners, image_np.shape)
+    for corner in corners:
+        corner['flag'] = corner.get('class_name') in flagged
+    corners.sort(key=lambda c: (not c['flag'], c['class_name'] if c['flag'] else '',
+                                c.get('confidence', 0.0)))
 
     # Build card options for dropdowns
     card_options = ['??'] + [f"{r}{s}" for s in 'SHDC'
@@ -590,22 +580,25 @@ def correct_classify(upload_id):
         corners=corners,
         corners_json=json.dumps(corners),
         card_options=card_options,
+        n_flagged=sum(c['flag'] for c in corners),
         img_w=image_np.shape[1],
         img_h=image_np.shape[0],
     )
 
 
 @app.route('/correct/<int:upload_id>/save', methods=['POST'])
+@local_only
 def correct_save(upload_id):
     """Save corrected detections and re-run hand assignment."""
     upload = db.session.get(Upload, upload_id)
     if not upload:
         flash('Upload not found.')
         return redirect(url_for('upload_form'))
-    if not can_modify_upload(upload):
-        abort(404)
 
     corrections = json.loads(request.form.get('corrections_json', '[]'))
+    for c in corrections:
+        for ui_field in ('flag', 'reviewed', 'sizeIdx'):
+            c.pop(ui_field, None)
 
     # Filter out '??' entries and build detections for hand assignment
     valid = [c for c in corrections if c.get('class_name') and c['class_name'] != '??']
@@ -684,13 +677,12 @@ def correct_crop_upload(upload_id):
 
 
 @app.route('/correct/<int:upload_id>/crop')
+@local_only
 def corner_crop(upload_id):
     """Serve a cropped corner image for the classification review."""
     upload = db.session.get(Upload, upload_id)
     if not upload:
         return 'Not found', 404
-    if not can_modify_upload(upload):
-        abort(404)
 
     x1 = int(request.args.get('x1', 0))
     y1 = int(request.args.get('y1', 0))
@@ -703,10 +695,18 @@ def corner_crop(upload_id):
     cx1, cy1 = max(0, x1), max(0, y1)
     cx2, cy2 = min(w, x2), min(h, y2)
 
-    crop = image_np[cy1:cy2, cx1:cx2]
-    from PIL import Image as PILImage
+    from PIL import Image as PILImage, ImageDraw
     import io
-    pil = PILImage.fromarray(crop)
+    if request.args.get('context') == '1':
+        # Wider view around the box, with the box outlined, to show which card it's on
+        pad = 2 * max(cx2 - cx1, cy2 - cy1)
+        ox1, oy1 = max(0, cx1 - pad), max(0, cy1 - pad)
+        ox2, oy2 = min(w, cx2 + pad), min(h, cy2 + pad)
+        pil = PILImage.fromarray(image_np[oy1:oy2, ox1:ox2])
+        ImageDraw.Draw(pil).rectangle([cx1 - ox1, cy1 - oy1, cx2 - ox1, cy2 - oy1],
+                                      outline=(0, 200, 0), width=max(2, (cx2 - cx1) // 15))
+    else:
+        pil = PILImage.fromarray(image_np[cy1:cy2, cx1:cx2])
     buf = io.BytesIO()
     pil.save(buf, 'JPEG', quality=90)
     buf.seek(0)

@@ -5,7 +5,8 @@
 {% block extra_style %}
         h2 { font-size: 18px; margin-bottom: 4px; text-align: center; }
         .instructions { color: var(--muted); font-size: 13px; text-align: center; margin-bottom: 16px; }
-        .canvas-wrap { position: relative; display: inline-block; width: 100%; }
+        .zoom-viewport { overflow: auto; max-height: 80vh; border-radius: 8px; }
+        .canvas-wrap { position: relative; display: inline-block; width: 100%; vertical-align: top; }
         .canvas-wrap img { width: 100%; display: block; border-radius: 8px; }
         .canvas-wrap canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%;
                               cursor: crosshair; border-radius: 8px; }
@@ -17,10 +18,33 @@
         .btn-undo { background: var(--panel); color: var(--text); border: 1px solid var(--border) !important; }
         .btn-undo:hover { background: var(--panel-hover); }
         .counter { text-align: center; color: var(--muted); font-size: 14px; margin: 8px 0; }
+        .toolbar { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap;
+                   font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+        .toolbar .group { display: flex; align-items: center; gap: 4px; }
+        .toolbar button { min-width: 30px; padding: 4px 8px; border-radius: 4px; cursor: pointer;
+                          background: var(--panel); color: var(--text); border: 1px solid var(--border); }
+        .toolbar button:hover { background: var(--panel-hover); }
+        .toolbar .value { min-width: 44px; text-align: center; color: var(--text); }
+        .missing-cards { background: var(--panel); padding: 10px 14px; border-radius: 6px;
+                         margin: 0 auto 12px; max-width: 600px; text-align: center; }
+        .missing-cards .missing-label { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+        .missing-suit { display: inline-block; margin-right: 12px; white-space: nowrap; }
+        .missing-suit-s, .missing-suit-c { color: var(--suit-black); }
+        .missing-suit-h, .missing-suit-d { color: var(--suit-red); }
 {% endblock %}
 
 {% block content %}
     <h2>Step 1: Review detected corners</h2>
+    {% if missing.values()|select|list %}
+    <div class="missing-cards">
+        <div class="missing-label">No corner labelled as:</div>
+        {% for suit, symbol in [('S', '&spades;'), ('H', '&hearts;'), ('D', '&diams;'), ('C', '&clubs;')] %}
+        {% if missing[suit] %}
+        <span class="missing-suit missing-suit-{{ suit|lower }}">{{ symbol|safe }} {{ missing[suit]|join('') }}</span>
+        {% endif %}
+        {% endfor %}
+    </div>
+    {% endif %}
     <p class="instructions">
         Tap to add a missed corner. Tap again to rotate it. Tap a third time to remove it.
     </p>
@@ -31,11 +55,29 @@
     </p>
     {% endif %}
 
-    <div class="canvas-wrap" id="canvas-wrap">
-        <img id="base-img"
-             src="{{ url_for('correct_crop_upload', upload_id=upload.id) }}"
-             alt="Original image">
-        <canvas id="overlay"></canvas>
+    <div class="toolbar">
+        <div class="group" title="Zoom (or Ctrl + scroll / pinch over the photo)">
+            Zoom
+            <button type="button" onclick="zoomBy(1 / 1.5)">&minus;</button>
+            <span class="value" id="zoom-value">100%</span>
+            <button type="button" onclick="zoomBy(1.5)">+</button>
+            <button type="button" onclick="setZoom(1)">Fit</button>
+        </div>
+        <div class="group" title="Size of boxes you add (keys [ and ])">
+            New box size
+            <button type="button" onclick="changeBoxScale(-0.1)">&minus;</button>
+            <span class="value" id="box-scale-value">100%</span>
+            <button type="button" onclick="changeBoxScale(0.1)">+</button>
+        </div>
+    </div>
+
+    <div class="zoom-viewport" id="zoom-viewport">
+        <div class="canvas-wrap" id="canvas-wrap">
+            <img id="base-img"
+                 src="{{ url_for('correct_crop_upload', upload_id=upload.id) }}"
+                 alt="Original image">
+            <canvas id="overlay"></canvas>
+        </div>
     </div>
 
     <p class="counter"><span id="box-count">0</span> corners</p>
@@ -56,6 +98,46 @@ const BOX_SIZES = {{ box_sizes_json | safe }};
 
 let boxes = {{ detections_json | safe }};
 let lastSizeIdx = 0;
+let boxScale = 1;   // multiplier on BOX_SIZES for boxes you add
+let zoom = 1;
+let hover = null;   // image coords of the cursor, for the new-box preview
+
+// Model-detected boxes, split by orientation, for sizing new boxes locally:
+// in an angled photo near corners are much bigger than far ones.
+const NEARBY = 5;
+const MODEL_BOXES = boxes.filter(b => b.source !== 'user').map(b => {
+    const [x1, y1, x2, y2] = b.bbox;
+    return {cx: (x1 + x2) / 2, cy: (y1 + y2) / 2, w: x2 - x1, h: y2 - y1, portrait: (y2 - y1) > (x2 - x1)};
+});
+
+// Boxes added in an earlier session don't record their orientation; infer it
+for (const b of boxes) {
+    if (b.source === 'user' && b.sizeIdx === undefined) {
+        const portrait = (b.bbox[3] - b.bbox[1]) > (b.bbox[2] - b.bbox[0]);
+        const idx = BOX_SIZES.findIndex(s => (s.h > s.w) === portrait);
+        b.sizeIdx = idx === -1 ? 0 : idx;
+    }
+}
+
+function median(xs) {
+    const s = [...xs].sort((a, b) => a - b), m = Math.floor(s.length / 2);
+    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+// Size of a new box of orientation BOX_SIZES[idx] at image point (x, y): the
+// median of the nearest model boxes of that orientation (falling back to the
+// photo-wide median), times the user's scale
+function boxSize(idx, x, y) {
+    let w = BOX_SIZES[idx].w, h = BOX_SIZES[idx].h;
+    if (x !== undefined) {
+        const portrait = BOX_SIZES[idx].h > BOX_SIZES[idx].w;
+        const near = MODEL_BOXES.filter(b => b.portrait === portrait)
+            .sort((a, b) => Math.hypot(a.cx - x, a.cy - y) - Math.hypot(b.cx - x, b.cy - y))
+            .slice(0, NEARBY);
+        if (near.length) { w = median(near.map(b => b.w)); h = median(near.map(b => b.h)); }
+    }
+    return {w: w * boxScale, h: h * boxScale};
+}
 
 const img = document.getElementById('base-img');
 const canvas = document.getElementById('overlay');
@@ -98,8 +180,63 @@ function draw() {
         }
     }
 
+    // Preview of the box a click would add
+    if (hover) {
+        const size = boxSize(lastSizeIdx, hover.x, hover.y);
+        ctx.setLineDash([4, 3]);
+        ctx.strokeStyle = 'rgba(52, 152, 219, 0.8)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect((hover.x - size.w / 2) * sx, (hover.y - size.h / 2) * sy, size.w * sx, size.h * sy);
+        ctx.setLineDash([]);
+    }
+
     document.getElementById('box-count').textContent = boxes.length;
 }
+
+function changeBoxScale(delta) {
+    boxScale = Math.min(3, Math.max(0.2, Math.round((boxScale + delta) * 10) / 10));
+    document.getElementById('box-scale-value').textContent = Math.round(boxScale * 100) + '%';
+    draw();
+}
+
+const viewport = document.getElementById('zoom-viewport');
+const wrap = document.getElementById('canvas-wrap');
+
+// Zoom, keeping the point at (clientX, clientY) (default: viewport centre) still
+function setZoom(z, clientX, clientY) {
+    z = Math.min(8, Math.max(1, z));
+    const vr = viewport.getBoundingClientRect();
+    if (clientX === undefined) { clientX = vr.left + vr.width / 2; clientY = vr.top + vr.height / 2; }
+    const fx = (viewport.scrollLeft + clientX - vr.left) / wrap.clientWidth;
+    const fy = (viewport.scrollTop + clientY - vr.top) / wrap.clientHeight;
+    zoom = z;
+    wrap.style.width = (zoom * 100) + '%';
+    resizeCanvas();
+    viewport.scrollLeft = fx * wrap.clientWidth - (clientX - vr.left);
+    viewport.scrollTop = fy * wrap.clientHeight - (clientY - vr.top);
+    document.getElementById('zoom-value').textContent = Math.round(zoom * 100) + '%';
+}
+
+function zoomBy(factor, clientX, clientY) { setZoom(zoom * factor, clientX, clientY); }
+
+viewport.addEventListener('wheel', function(e) {
+    if (!e.ctrlKey) return;   // plain scroll pans; Ctrl + scroll (and trackpad pinch) zooms
+    e.preventDefault();
+    zoomBy(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX, e.clientY);
+}, {passive: false});
+
+document.addEventListener('keydown', function(e) {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+    if (e.key === '[') changeBoxScale(-0.1);
+    if (e.key === ']') changeBoxScale(0.1);
+});
+
+canvas.addEventListener('mousemove', function(e) {
+    const rect = canvas.getBoundingClientRect();
+    hover = {x: (e.clientX - rect.left) / scaleX(), y: (e.clientY - rect.top) / scaleY()};
+    draw();
+});
+canvas.addEventListener('mouseleave', function() { hover = null; draw(); });
 
 canvas.addEventListener('click', function(e) {
     const rect = canvas.getBoundingClientRect();
@@ -113,14 +250,13 @@ canvas.addEventListener('click', function(e) {
             const box = boxes[i];
             if (box.clicks === 1 && BOX_SIZES.length > 1) {
                 // Second click: rotate the box (swap to the other size)
-                const bw = x2 - x1, bh = y2 - y1;
                 const midX = (x1 + x2) / 2, midY = (y1 + y2) / 2;
-                // Use whichever BOX_SIZE is most different from current
-                const curAspect = bw / bh;
-                let otherIdx = BOX_SIZES.findIndex(s => Math.abs(s.w / s.h - curAspect) > 0.1);
-                if (otherIdx === -1) otherIdx = 0;
+                // Switch to the other orientation (boxes remember which one they are)
+                const otherIdx = box.sizeIdx === 0 ? 1 : 0;
                 lastSizeIdx = otherIdx;
-                const nw = BOX_SIZES[otherIdx].w, nh = BOX_SIZES[otherIdx].h;
+                box.sizeIdx = otherIdx;
+                const other = boxSize(otherIdx, midX, midY);
+                const nw = other.w, nh = other.h;
                 box.bbox = [
                     Math.max(0, Math.round(midX - nw / 2)),
                     Math.max(0, Math.round(midY - nh / 2)),
@@ -148,7 +284,7 @@ canvas.addEventListener('click', function(e) {
     }
 
     // Add a new box centred on the click, using the last-used size
-    const size = BOX_SIZES[lastSizeIdx];
+    const size = boxSize(lastSizeIdx, cx, cy);
     const halfW = size.w / 2, halfH = size.h / 2;
     const x1 = Math.max(0, Math.round(cx - halfW));
     const y1 = Math.max(0, Math.round(cy - halfH));
@@ -161,6 +297,7 @@ canvas.addEventListener('click', function(e) {
         confidence: 0,
         source: 'user',
         clicks: 1,
+        sizeIdx: lastSizeIdx,
     });
     draw();
 });

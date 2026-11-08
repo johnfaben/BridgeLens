@@ -63,7 +63,7 @@
     {% endif %}
 
     <p class="info">{{ total_cards }} unique cards detected
-        {% if inferred_card %}<br>The {{ inferred_card_display }} was not found and has been placed in the {{ inferred_hand_display }} hand by default{% endif %}
+        {% if inferred_card %}<br>The {{ inferred_card_display }} {{ 'were' if inferred_plural else 'was' }} not found and {{ 'have' if inferred_plural else 'has' }} been placed in the {{ inferred_hand_display }} hand by default{% endif %}
         {% if manually_added %}<br>{{ manually_added }} card{{ 's' if manually_added != 1 else '' }} added manually to give the PBN below{% endif %}
     </p>
 

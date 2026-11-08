@@ -1,5 +1,6 @@
 """Card detection and classification inference logic."""
 
+import math
 import os
 import threading
 
@@ -25,6 +26,7 @@ ALL_CARDS = {f"{r}{s}" for s in 'SHDC'
 
 CLASSIFY_THRESHOLD = 0.30
 POSITION_THRESHOLD = 0.50
+SPREAD_WARN = 0.2  # fraction of the image diagonal; see spread_cards()
 
 # Serializes inference within a single worker process. Other worker
 # processes have their own instance, so global concurrency = num_workers.
@@ -47,24 +49,27 @@ def queue_leave():
         _queue_depth -= 1
 
 
-def get_classifier():
-    """Load the CNN classifier model."""
-    global _classifier
-    if _classifier is not None:
-        return _classifier
-
+def load_classifier(path):
+    """Load a CNN classifier checkpoint into the dict used by _classify_crop_cnn."""
     from train_classifier_cnn import CardClassifier
-    checkpoint = torch.load(CNN_MODEL_PATH, map_location='cpu', weights_only=False)
+    checkpoint = torch.load(path, map_location='cpu', weights_only=False)
     model = CardClassifier(num_classes=checkpoint['num_classes'])
     model.load_state_dict(checkpoint['model_state_dict'])
     model.eval()
-    _classifier = {
+    print(f"Loaded CNN classifier ({checkpoint.get('val_acc', 0):.3f} val acc)")
+    return {
         'model': model,
         'class_names': checkpoint['class_names'],
         'img_size': checkpoint.get('img_size', 64),
+        'crop_expand': checkpoint.get('crop_expand', 1.0),
     }
-    print(f"Loaded CNN classifier ({checkpoint.get('val_acc', 0):.3f} val acc)")
 
+
+def get_classifier():
+    """Load the live CNN classifier model (cached)."""
+    global _classifier
+    if _classifier is None:
+        _classifier = load_classifier(CNN_MODEL_PATH)
     return _classifier
 
 
@@ -86,20 +91,43 @@ def _classify_crop_cnn(crop_rgb, classifier_dict):
     return class_name, conf.item()
 
 
-def classify_corners(image_np, corners):
-    """Classify each detected corner crop. Returns list of card detections."""
-    classifier = get_classifier()
+def crop_box(image_np, bbox, expand=1.0):
+    """Clip bbox to the image and return (crop, (x1, y1, x2, y2)), or (None, None) if empty.
+
+    The single crop policy for classification; training data must use it too.
+    expand grows the box about its centre (the classifier checkpoint records
+    the value it was trained with as crop_expand). The returned box is the
+    unexpanded one, clipped.
+    """
     h, w = image_np.shape[:2]
+    x1, y1, x2, y2 = bbox
+    if expand != 1.0:
+        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+        hw, hh = (x2 - x1) * expand / 2, (y2 - y1) * expand / 2
+        ex1, ey1 = max(0, int(cx - hw)), max(0, int(cy - hh))
+        ex2, ey2 = min(w, int(cx + hw)), min(h, int(cy + hh))
+        box = (max(0, int(x1)), max(0, int(y1)), min(w, int(x2)), min(h, int(y2)))
+        if ex2 <= ex1 or ey2 <= ey1 or box[2] <= box[0] or box[3] <= box[1]:
+            return None, None
+        return image_np[ey1:ey2, ex1:ex2], box
+    cx1, cy1 = max(0, int(x1)), max(0, int(y1))
+    cx2, cy2 = min(w, int(x2)), min(h, int(y2))
+    if cx2 <= cx1 or cy2 <= cy1:
+        return None, None
+    return image_np[cy1:cy2, cx1:cx2], (cx1, cy1, cx2, cy2)
+
+
+def classify_corners(image_np, corners, classifier=None):
+    """Classify each detected corner crop. Returns list of card detections."""
+    classifier = classifier or get_classifier()
     detections = []
 
     for corner in corners:
-        x1, y1, x2, y2 = corner['bbox']
-        cx1, cy1 = max(0, int(x1)), max(0, int(y1))
-        cx2, cy2 = min(w, int(x2)), min(h, int(y2))
-        if cx2 <= cx1 or cy2 <= cy1:
+        crop, box = crop_box(image_np, corner['bbox'], classifier['crop_expand'])
+        if crop is None:
             continue
+        cx1, cy1, cx2, cy2 = box
 
-        crop = image_np[cy1:cy2, cx1:cx2]
         top1_name, top1_conf = _classify_crop_cnn(crop, classifier)
 
         if top1_conf < CLASSIFY_THRESHOLD or top1_name == 'XX':
@@ -114,6 +142,25 @@ def classify_corners(image_np, corners):
         })
 
     return detections
+
+
+def spread_cards(corners, image_shape, threshold=SPREAD_WARN):
+    """Card names whose corners are implausibly far apart.
+
+    A card's corners in a fanned hand sit close together, so one label used on
+    corners more than `threshold` of the image diagonal apart means at least
+    one of those corners is misread.
+    """
+    diag = math.hypot(image_shape[0], image_shape[1])
+    centres = {}
+    for c in corners:
+        name = c.get('class_name')
+        if not name or name in ('??', 'XX'):
+            continue
+        x1, y1, x2, y2 = c['bbox']
+        centres.setdefault(name, []).append(((x1 + x2) / 2, (y1 + y2) / 2))
+    return {name for name, pts in centres.items()
+            if max((math.dist(p, q) for p in pts for q in pts), default=0) > threshold * diag}
 
 
 def parse_card(class_name):
@@ -206,18 +253,19 @@ def detections_to_four_hands(detections):
             cluster = int(np.argmin(dists[i]))
             card_directions[card] = direction_map.get(cluster, 'n')
 
-    inferred_card = None
-    if len(cards) == 51:
-        counts = {}
-        for d in card_directions.values():
-            counts[d] = counts.get(d, 0) + 1
-        if sorted(counts.values()) == [12, 13, 13, 13]:
-            missing = ALL_CARDS - set(cards)
-            if len(missing) == 1:
-                missing_card = missing.pop()
-                short_hand = [d for d, c in counts.items() if c == 12][0]
-                card_directions[missing_card] = short_hand
-                inferred_card = (missing_card, short_hand)
+    # If three hands are full, every card not found must be in the fourth.
+    # When this is wrong, one of the "full" hands already holds a card that
+    # belongs elsewhere, so it never spoils an otherwise correct deal.
+    inferred_cards = []
+    counts = {d: 0 for d in 'nesw'}
+    for d in card_directions.values():
+        counts[d] += 1
+    short = [d for d, c in counts.items() if c < 13]
+    missing = ALL_CARDS - set(cards)
+    if len(short) == 1 and len(missing) == 13 - counts[short[0]]:
+        for card in sorted(missing):
+            card_directions[card] = short[0]
+            inferred_cards.append((card, short[0]))
 
     hands = {d: {'S': [], 'H': [], 'D': [], 'C': []} for d in 'nesw'}
     for name, direction in card_directions.items():
@@ -229,7 +277,7 @@ def detections_to_four_hands(detections):
         for suit in hands[d]:
             hands[d][suit].sort(key=lambda r: RANK_ORDER.get(r, 0), reverse=True)
 
-    return hands, card_positions, inferred_card
+    return hands, card_positions, inferred_cards
 
 
 def _build_single_hand(cards):

@@ -21,8 +21,8 @@ def local_tools_enabled():
 def local_only(f):
     """404 unless local tools are enabled.
 
-    For the training-set correction index and queue, which list every upload
-    and so must never be reachable on the production site.
+    For the correction workflow (/correct...), which writes training labels and
+    lists every upload; users fix their hands on the live site via /edit.
     """
     @wraps(f)
     def wrapper(*args, **kwargs):
@@ -38,7 +38,7 @@ def is_admin():
 
 
 def can_modify_upload(upload):
-    """Whether the current visitor may correct/edit this upload's results.
+    """Whether the current visitor may edit this upload's hands.
 
     Allowed: local tools, admins, the logged-in uploader, or (for anonymous
     uploads) the browser session that submitted it.

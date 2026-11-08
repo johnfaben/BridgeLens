@@ -39,7 +39,7 @@
             <img class="thumb" loading="lazy" src="{{ url_for('correct_crop_upload', upload_id=u.id) }}" alt=""></a></td>
         <td><a href="{{ url_for('correct_corners', upload_id=u.id) }}">{{ u.id }}</a></td>
         {% if show_source %}
-        <td>{{ r.entry.tag }}<br><span class="fname">server #{{ r.entry.server_id }}</span></td>
+        <td>{{ r.entry.tag }} · {{ r.entry.split }}<br><span class="fname">{{ r.entry.key }}{% if r.entry.deal_group != r.entry.key %} · deal {{ r.entry.deal_group }}{% endif %}</span></td>
         <td>{{ r.entry.created_at[:10] }}</td>
         {% else %}
         <td>{{ u.created_at.strftime('%Y-%m-%d') }}<br><span class="fname">{{ u.original_filename }}</span></td>
