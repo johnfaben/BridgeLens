@@ -1,6 +1,6 @@
-description: Ultralytics best_corner_detector model trained on /workspace/data.yaml
+description: Ultralytics detector model trained on /workspace/runs/r1-2026-11-07/detector/data.yaml
 author: Ultralytics
-date: '2026-04-01T21:17:46.069700'
+date: '2026-11-07T02:04:31.518763'
 version: 8.4.12
 license: AGPL-3.0 License (https://ultralytics.com/license)
 docs: https://docs.ultralytics.com
