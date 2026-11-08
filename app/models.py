@@ -45,6 +45,12 @@ class Upload(db.Model):
     bbo_url = db.Column(db.String(1024))
     total_cards = db.Column(db.Integer)
     training_consent = db.Column(db.Boolean, default=False)
+    # Whether the training checkbox was ticked by default when this was uploaded.
+    # False: opt-in era (before 2026-11-08 00:47 UTC), so training_consent=False
+    #        only means the box was left unticked.
+    # True:  opt-out era, so training_consent=False means the user unticked it.
+    # Either way, training_consent=False means never use for training.
+    consent_default = db.Column(db.Boolean)
     # JSON blob: list of {bbox: [x1,y1,x2,y2], class_name: str, confidence: float}
     detections_json = db.Column(db.Text)
     # JSON blob: same format, after user corrections (null if uncorrected)

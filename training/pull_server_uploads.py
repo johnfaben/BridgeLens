@@ -12,6 +12,11 @@ New entries default to split 'train'; their own deal_group.
 Usage:
     python -m training.pull_server_uploads --tag danny 59 60 61 63
     python -m training.pull_server_uploads --tag consent 5 22 25
+    python -m training.pull_server_uploads --tag danny --without-consent "Danny agreed in person" 59
+
+Uploads without training_consent are skipped unless --without-consent gives the
+reason they may be used anyway (the uploader agreed directly). The privacy
+policy promises that unconsented uploads are never used otherwise.
 """
 
 import argparse
@@ -45,6 +50,7 @@ with app.app_context():
             "server_id": u.id, "user_id": u.user_id,
             "created_at": u.created_at.isoformat(),
             "training_consent": bool(u.training_consent),
+            "consent_default": getattr(u, "consent_default", None),
             "original_filename": u.original_filename,
             "stored_filename": u.stored_filename,
             "detections_json": u.detections_json,
@@ -73,6 +79,9 @@ def main():
     parser.add_argument('ids', nargs='+', type=int, help='Server upload ids')
     parser.add_argument('--tag', required=True,
                         help='Why these were selected, e.g. danny, john, consent')
+    parser.add_argument('--without-consent', metavar='REASON',
+                        help='Allow uploads without training consent, recording why '
+                             '(only when the uploader agreed directly)')
     args = parser.parse_args()
 
     records = fetch_remote_records(args.ids)
@@ -88,6 +97,9 @@ def main():
 
         for rec in records:
             sid = rec['server_id']
+            if not rec['training_consent'] and not args.without_consent:
+                print(f"[no consent] server {sid}: skipping (see --without-consent)")
+                continue
             if rec['md5'] is None:
                 print(f"[missing] server {sid}: image not on server, skipping")
                 continue
@@ -106,6 +118,7 @@ def main():
                     bbo_url=rec['bbo_url'],
                     total_cards=rec['total_cards'],
                     training_consent=rec['training_consent'],
+                    consent_default=rec.get('consent_default'),
                     detections_json=rec['detections_json'],
                 )
                 db.session.add(upload)
@@ -129,6 +142,9 @@ def main():
                 'server_user_id': rec['user_id'],
                 'created_at': rec['created_at'],
                 'training_consent': rec['training_consent'],
+                'consent_default': rec.get('consent_default'),
+                **({'used_without_consent': args.without_consent}
+                   if not rec['training_consent'] else {}),
                 'stored_filename': upload.stored_filename,
                 'md5': rec['md5'],
                 'server_total_cards': rec['total_cards'],
