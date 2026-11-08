@@ -15,7 +15,7 @@
     <h1 style="font-size:24px;">Processing image</h1>
     <p class="status" id="status">Starting...</p>
     <div class="image-wrap">
-        <img id="preview" src="{{ url_for('correct_crop_upload', upload_id=upload_id) }}" alt="Uploaded image">
+        <img id="preview" src="{{ url_for('edit_original_image', upload_id=upload_id) }}" alt="Uploaded image">
         <canvas id="overlay"></canvas>
     </div>
     <p class="timing" id="timing"></p>

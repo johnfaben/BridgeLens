@@ -327,7 +327,7 @@ def edit_hands(upload_id):
 
     return render_template('edit_hands.html', upload=upload, hands=hands,
                            image_file=f'output/{upload.result_filename}',
-                           original_image_url=url_for('correct_crop_upload', upload_id=upload_id),
+                           original_image_url=url_for('edit_original_image', upload_id=upload_id),
                            missing=missing)
 
 
@@ -666,7 +666,19 @@ def correct_save(upload_id):
     )
 
 
+@app.route('/edit/<int:upload_id>/original')
+def edit_original_image(upload_id):
+    """Serve the uploaded photo without the overlay, to whoever may edit it."""
+    upload = db.session.get(Upload, upload_id)
+    if not upload or not can_modify_upload(upload):
+        abort(404)
+    from flask import send_file
+    return send_file(os.path.join(app.config['UPLOAD_FOLDER'], upload.stored_filename),
+                     mimetype='image/jpeg')
+
+
 @app.route('/correct/<int:upload_id>/image')
+@local_only
 def correct_crop_upload(upload_id):
     """Serve the original uploaded image for the correction canvas."""
     upload = db.session.get(Upload, upload_id)
