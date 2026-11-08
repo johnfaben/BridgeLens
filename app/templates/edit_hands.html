@@ -181,14 +181,16 @@ function updateCount() {
     updateShapes();
 }
 
-// Suit lengths in S-H-D-C order, e.g. 5431; dashes once a suit reaches 10
+// Suit lengths in S-H-D-C order with a void as a dash, e.g. 5431 or 6-43;
+// spaced out once a suit reaches 10, e.g. "10 2 1 -"
 function updateShapes() {
     ['n', 'e', 's', 'w'].forEach(h => {
         const lengths = SUITS.map(s =>
             document.querySelector(`.suit-input[data-hand="${h}"][data-suit="${s}"]`).value.length);
         const total = lengths.reduce((a, b) => a + b, 0);
         const el = document.getElementById('shape-' + h);
-        el.textContent = lengths.join(lengths.some(n => n >= 10) ? '-' : '') +
+        el.textContent = lengths.map(n => n === 0 ? '-' : n)
+                                .join(lengths.some(n => n >= 10) ? ' ' : '') +
                          (total === 13 ? '' : ` (${total} cards)`);
         el.className = 'hand-shape' + (total === 13 ? '' : ' wrong');
     });
