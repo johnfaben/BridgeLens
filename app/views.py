@@ -88,6 +88,7 @@ def infer_image():
         bbo_url='',
         total_cards=0,
         training_consent=training_consent,
+        consent_default=True,  # upload.html renders the box ticked; change both together
     )
     db.session.add(upload)
     db.session.commit()
