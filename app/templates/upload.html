@@ -3,7 +3,8 @@
 {% block extra_style %}
         .upload-wrap { text-align: center; padding-top: 30px; }
         h1 { font-size: 24px; margin-bottom: 8px; }
-        .subtitle { color: var(--muted); font-size: 14px; margin-bottom: 30px; }
+        .subtitle { color: var(--muted); font-size: 14px; margin-bottom: 12px; }
+        .photo-tip { color: var(--muted); font-size: 13px; margin-bottom: 30px; }
         .upload-area { background: var(--panel); border: 2px dashed var(--border); border-radius: 12px;
                        padding: 40px 20px; margin-bottom: 20px; }
         .upload-area label { display: block; cursor: pointer; }
@@ -23,6 +24,7 @@
 <div class="upload-wrap">
     <h1>BridgeLens</h1>
     <p class="subtitle">Upload a photo of a bridge deal – we'll convert it into a PBN and give you a diagram of it.</p>
+    <p class="photo-tip">Works best with a photo taken from directly above, where both corners of each card can be seen.</p>
     <form id="upload-form" action="{{ url_for('infer_image') }}" method="post" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="upload-area" id="drop-area">

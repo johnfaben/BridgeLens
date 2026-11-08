@@ -15,6 +15,12 @@
         .card-item .conf { color: var(--muted); font-size: 11px; margin-top: 2px; }
         .card-item.low-conf { border: 2px solid var(--warning); }
         .card-item.user-added { border: 2px solid #666; }
+        .card-item.flagged { border: 2px solid var(--suit-red); grid-column: span 2; }
+        .card-item.flagged .crops { display: flex; gap: 4px; align-items: center; }
+        .card-item.flagged .crops img { width: 50%; }
+        .flag-note { background: var(--panel); border-left: 3px solid var(--suit-red); padding: 8px 12px;
+                     font-size: 13px; margin-bottom: 12px; }
+        .section-label { color: var(--muted); font-size: 12px; margin: 4px 0 8px; }
         .controls { display: flex; gap: 8px; justify-content: center; margin: 16px 0; }
         .controls button { padding: 10px 20px; border-radius: 6px; border: none; font-size: 14px;
                            cursor: pointer; }
@@ -33,11 +39,26 @@
 
     <p class="counter">{{ corners|length }} corners detected</p>
 
+    {% if n_flagged %}
+    <div class="flag-note">
+        <strong>Check these first.</strong> Each of these cards has corners far apart in the photo,
+        so at least one of them is misread. The right-hand picture shows where each box sits.
+    </div>
+    {% endif %}
+
     <div class="card-grid">
         {% for corner in corners %}
-        <div class="card-item {{ 'low-conf' if corner.confidence < 0.5 else '' }} {{ 'user-added' if corner.get('source') == 'user' else '' }}">
-            <img src="{{ url_for('corner_crop', upload_id=upload.id, x1=corner.bbox[0]|int, y1=corner.bbox[1]|int, x2=corner.bbox[2]|int, y2=corner.bbox[3]|int) }}"
+        {% if loop.first and corner.flag %}<div class="section-label" style="grid-column: 1 / -1">Cards with corners far apart</div>{% endif %}
+        {% if corner.flag == false and (loop.first or loop.previtem.flag) %}<div class="section-label" style="grid-column: 1 / -1">{{ 'Everything else, least confident first' if n_flagged else 'Least confident first' }}</div>{% endif %}
+        <div class="card-item {{ 'low-conf' if corner.confidence < 0.5 else '' }} {{ 'user-added' if corner.get('source') == 'user' else '' }} {{ 'flagged' if corner.flag else '' }}">
+            {% set crop_args = dict(upload_id=upload.id, x1=corner.bbox[0]|int, y1=corner.bbox[1]|int, x2=corner.bbox[2]|int, y2=corner.bbox[3]|int) %}
+            {% if corner.flag %}<div class="crops">{% endif %}
+            <img src="{{ url_for('corner_crop', **crop_args) }}"
                  alt="{{ corner.class_name }}">
+            {% if corner.flag %}
+            <img src="{{ url_for('corner_crop', context=1, **crop_args) }}" alt="Where this box is">
+            </div>
+            {% endif %}
             <select class="card-select" data-index="{{ loop.index0 }}">
                 {% for opt in card_options %}
                 <option value="{{ opt }}" {{ 'selected' if opt == corner.class_name else '' }}>{{ opt }}</option>

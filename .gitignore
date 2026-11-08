@@ -9,3 +9,9 @@ tmp/
 *.db
 DEPLOY.md
 SETUP_TODO.md
+docs/
+training_data/
+
+# local-only
+.claude/settings.local.json
+kernel.errors.txt

@@ -76,12 +76,13 @@ def tile_image(image_np, chunk_size=CHUNK_SIZE, overlap=OVERLAP):
     return tiles
 
 
-def detect_corners(image_np):
+def detect_corners(image_np, corner_model=None):
     """Stage 1: Detect card corners via tiling + NMS dedup.
 
+    corner_model defaults to the live detector; pass a YOLO model to evaluate another.
     Returns list of dicts with keys: bbox (x1,y1,x2,y2), confidence, cx, cy.
     """
-    corner_model = _get_corner_model()
+    corner_model = corner_model or _get_corner_model()
     tiles = tile_image(image_np)
     all_boxes = []
     all_scores = []

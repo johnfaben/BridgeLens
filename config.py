@@ -25,4 +25,8 @@ RESEND_API_KEY = os.environ.get('RESEND_API_KEY')
 
 ADMINS = [e.strip() for e in os.environ.get('ADMIN_EMAILS', os.environ.get('ADMIN_EMAIL', '')).split(',') if e.strip()]
 
+# Local labelling tools (the /correct workflow). Always on under the
+# debug server; this lets them run locally without debug. Never set it in production.
+CORRECTIONS_ENABLED = os.environ.get('ENABLE_CORRECTIONS') == '1'
+
 MAX_CONTENT_LENGTH = 20 * 1024 * 1024  # 20 MB upload limit

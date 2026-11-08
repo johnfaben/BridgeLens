@@ -35,10 +35,19 @@
 {% endblock %}
 
 {% block content %}
+    {% if correction_mode %}
+        {% if next_correct_id %}
+        <a class="back-link" href="{{ url_for('correct_corners', upload_id=next_correct_id) }}"
+           style="background:var(--success); color:#fff; border:none; margin-bottom:8px;">Next hand to correct (#{{ next_correct_id }})</a>
+        {% else %}
+        <p class="info">All hands in the training set are corrected.</p>
+        {% endif %}
+    {% endif %}
+
     {% if total_cards < 52 and upload_id %}
     <div class="incomplete-banner">
         {{ total_cards }}/52 cards detected.
-        <a href="{{ url_for('edit_hands', upload_id=upload_id) }}">Edit hands</a>
+        {% if can_modify(upload_id) %}<a href="{{ url_for('edit_hands', upload_id=upload_id) }}">Edit hands</a>{% endif %}
     </div>
     {% endif %}
 
@@ -54,7 +63,7 @@
     {% endif %}
 
     <p class="info">{{ total_cards }} unique cards detected
-        {% if inferred_card %}<br>The {{ inferred_card_display }} was not found and has been placed in the {{ inferred_hand_display }} hand by default{% endif %}
+        {% if inferred_card %}<br>The {{ inferred_card_display }} {{ 'were' if inferred_plural else 'was' }} not found and {{ 'have' if inferred_plural else 'has' }} been placed in the {{ inferred_hand_display }} hand by default{% endif %}
         {% if manually_added %}<br>{{ manually_added }} card{{ 's' if manually_added != 1 else '' }} added manually to give the PBN below{% endif %}
     </p>
 
@@ -72,7 +81,11 @@
 
     <a class="bbo-link" href="{{ bbo_url }}" target="_blank">Open in BBO Handviewer</a>
 
-    {% if upload_id %}
+    {% if correction_mode %}
+    <a class="back-link" href="{{ url_for('correct_index') }}">Correction index</a>
+    {% endif %}
+
+    {% if upload_id and can_modify(upload_id) %}
     <a class="back-link" href="{{ url_for('edit_hands', upload_id=upload_id) }}"
        style="background:var(--success); color:#fff; border:none; margin-bottom:8px;">Edit hands</a>
     {% endif %}
