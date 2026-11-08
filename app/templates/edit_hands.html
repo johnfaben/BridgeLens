@@ -28,6 +28,8 @@
                       padding: 4px 6px; font-size: 14px; font-family: monospace; width: 100%;
                       text-transform: uppercase; }
         .suit-input:focus { border-color: var(--heading); outline: none; }
+        .suit-input.dupe { border-color: var(--warning); background: #fff4e5; }
+        .missing-cards .dupe-line { margin-top: 6px; }
         .controls { display: flex; gap: 8px; justify-content: center; margin: 16px 0; }
         .controls button { padding: 10px 20px; border-radius: 6px; border: none; font-size: 14px;
                            cursor: pointer; }
@@ -54,7 +56,7 @@
     <p class="hint">Use AKQJT98765432 notation. Cards are auto-sorted.</p>
 
     <div class="missing-cards" id="missing-cards">
-        <div class="missing-label">Missing cards:</div>
+        <div class="missing-label" id="missing-label">Missing cards:</div>
         <span id="missing-display">
         {% for suit, symbol in [('S', '\u2660'), ('H', '\u2665'), ('D', '\u2666'), ('C', '\u2663')] %}
             {% if missing[suit] %}
@@ -62,6 +64,10 @@
             {% endif %}
         {% endfor %}
         </span>
+        <div class="dupe-line" id="dupe-line" style="display:none">
+            <div class="missing-label">In more than one hand:</div>
+            <span id="dupe-display"></span>
+        </div>
     </div>
 
     <form id="edit-form" method="POST" action="{{ url_for('save_edit', upload_id=upload.id) }}">
@@ -152,14 +158,41 @@ const ALL_RANKS = new Set(RANK_ORDER.split(''));
 const missingDisplay = document.getElementById('missing-display');
 const missingCards = document.getElementById('missing-cards');
 
+const HAND_NAMES = {'n': 'North', 'e': 'East', 's': 'South', 'w': 'West'};
+const dupeLine = document.getElementById('dupe-line');
+const dupeDisplay = document.getElementById('dupe-display');
+const missingLabel = document.getElementById('missing-label');
+
 function updateCount() {
-    // Collect all cards currently in the inputs
+    // Collect all cards currently in the inputs, and which hands hold each
     const found = {};
-    SUITS.forEach(s => { found[s] = new Set(); });
+    const holders = {};
+    SUITS.forEach(s => { found[s] = new Set(); holders[s] = {}; });
     inputs.forEach(inp => {
         const suit = inp.dataset.suit;
-        inp.value.split('').forEach(r => { if (ALL_RANKS.has(r)) found[suit].add(r); });
+        inp.value.split('').forEach(r => {
+            if (!ALL_RANKS.has(r)) return;
+            found[suit].add(r);
+            (holders[suit][r] = holders[suit][r] || []).push(inp.dataset.hand);
+        });
     });
+
+    // Cards typed into more than one hand
+    let dupeHtml = '';
+    inputs.forEach(inp => inp.classList.remove('dupe'));
+    SUITS.forEach(s => {
+        RANK_ORDER.split('').forEach(r => {
+            const hs = holders[s][r] || [];
+            if (hs.length < 2) return;
+            dupeHtml += '<span class="missing-suit ' + SUIT_CLASSES[s] + '">' + SUIT_SYMBOLS[s] + ' ' + r +
+                        '</span> <span style="color:var(--muted)">(' +
+                        hs.map(h => HAND_NAMES[h]).join(', ') + ')</span> ';
+            hs.forEach(h => document.querySelector(
+                `.suit-input[data-hand="${h}"][data-suit="${s}"]`).classList.add('dupe'));
+        });
+    });
+    dupeDisplay.innerHTML = dupeHtml;
+    dupeLine.style.display = dupeHtml ? 'block' : 'none';
 
     let total = 0;
     SUITS.forEach(s => { total += found[s].size; });
@@ -177,7 +210,8 @@ function updateCount() {
         }
     });
     missingDisplay.innerHTML = html;
-    missingCards.style.display = (total === 52) ? 'none' : 'block';
+    missingLabel.style.display = html ? 'block' : 'none';
+    missingCards.style.display = (total === 52 && !dupeHtml) ? 'none' : 'block';
     updateShapes();
 }
 
